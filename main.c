@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
@@ -13,6 +14,9 @@
 
 #define QUEUE_DEPTH 16
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
+
+// mimicking defer statements with stages for cleanup
+#define STAGE static inline __attribute__((always_inline))
 
 unsigned int clk = CLOCK_MONOTONIC;
 static int ui = -1;
@@ -133,6 +137,8 @@ void handle_event(struct input_event* event, modifier* keys) {
   
 }
 
+STAGE int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path);
+
 int find_keyboard_event_path(char *out_path) {
     FILE *fp = fopen(PROC_INPUT_DEVICES, "r");
     if (!fp) {
@@ -140,6 +146,12 @@ int find_keyboard_event_path(char *out_path) {
         return -1;
     }
 
+    int ret = find_keyboard_event_path__post_fopen(fp, out_path);
+    fclose(fp);
+    return ret;
+}
+
+int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path) {
     char line[256];
     bool is_keyboard = false;
 
@@ -173,26 +185,29 @@ int find_keyboard_event_path(char *out_path) {
 
         if (event_identifier && is_keyboard) {
             snprintf(out_path, PATH_MAX, "/dev/input/%s", event_identifier);
-            fclose(fp);
             return 0;
         }
 
       }
     }
-
-    fclose(fp);
-    return -1;
+    return 0;
 }
 
+STAGE int main__post_uring_init(const char* device_path, struct io_uring ring, struct io_uring_cqe *cqe);
+STAGE int main__post_keyboard_open(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe);
+STAGE int main__post_keyboard_grab(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe);
+STAGE int main__post_uinput_open(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe);
+STAGE int main__post_virtual_device_create(modifier *keys, device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe);
+
 int main() {
+  int ret = 0;
+
   char device_path[PATH_MAX];
 
   if (find_keyboard_event_path(device_path) < 0) {
     fprintf(stderr, "unable to find a path to the keyboard device\n");
     return 1;
   }
-
-  device_context keyboard = { .path = device_path, .fd = UNINITIALIZED_FD };
   
   struct io_uring ring;
   struct io_uring_cqe *cqe;
@@ -202,11 +217,33 @@ int main() {
     return 1;
   }
 
+  ret = main__post_uring_init(device_path, ring, cqe);
+  io_uring_queue_exit(&ring);
+
+  return ret;
+}
+
+int main__post_uring_init(const char* device_path, struct io_uring ring, struct io_uring_cqe *cqe) {
+  int ret = 0;
+
+  device_context keyboard = { .path = device_path, .fd = UNINITIALIZED_FD };
   keyboard.fd = open(keyboard.path, O_RDONLY);
+  if (keyboard.fd < 0) {
+    fprintf(stderr, "failed to open handle to input device %s: currently skipped: ensure you are root\n", keyboard.path);
+    return 1;
+  }
+
+  ret = main__post_keyboard_open(keyboard, ring, cqe);
+  close(keyboard.fd);
+
+  return ret;
+}
+
+int main__post_keyboard_open(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe) {
+  int ret = 0;
 
   if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) < 0) { // force monotonic timestamps
       perror("failed to set monotonic clock");
-      close(keyboard.fd);
       return 1;
   }
 
@@ -214,19 +251,33 @@ int main() {
 
   if (ioctl(keyboard.fd, EVIOCGRAB, 1) < 0) {
       perror("failed to grab device exclusively");
-      close(keyboard.fd);
       return 1;
   }
 
-  if (keyboard.fd < 0) {
-    fprintf(stderr, "failed to open handle to input device %s: currently skipped: ensure you are root\n", keyboard.path);
+  ret = main__post_keyboard_grab(keyboard, ring, cqe);
+  ioctl(keyboard.fd, EVIOCGRAB, 0);
+
+  return ret;
+}
+
+int main__post_keyboard_grab(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe) {
+  int ret = 0;
+
+  ui = open("/dev/uinput", O_NONBLOCK | O_WRONLY);
+  if (ui < 0) {
+    perror("failed to open uinput");
     return 1;
   }
-  queue_device_read(&ring, &keyboard);
 
-  printf("ring submitted\n");
-  io_uring_submit(&ring);
+  ret = main__post_uinput_open(keyboard, ring, cqe);
+  close(ui);
 
+  return ret;
+}
+
+int main__post_uinput_open(device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe) {
+  int ret = 0;
+  
   uint64_t last_release_ms = 0;
   modifier keys[8];
   memset(keys, 0, sizeof(keys));
@@ -239,11 +290,6 @@ int main() {
   usetup.id.product = 0x1337;
   strcpy(usetup.name, "sticky keys daemon");
 
-  ui = open("/dev/uinput", O_NONBLOCK | O_WRONLY);
-  if (ui < 0) {
-    perror("failed to open uinput");
-    return 1;
-  }
 
   if(ioctl(ui, UI_SET_EVBIT, 1) < 0) {
     perror("failed to set EVBIT");
@@ -261,19 +307,31 @@ int main() {
     perror("failed to set up virtual device");
     return 1;
   }
+
   if(ioctl(ui, UI_DEV_CREATE) < 0) {
     perror("failed to create virtual device");
     return 1;
   }
 
   sleep(1);
+  ret = main__post_virtual_device_create(keys, keyboard, ring, cqe);
+  sleep(1);
+  ioctl(ui, UI_DEV_DESTROY);
+
+  return ret;
+}
+
+int main__post_virtual_device_create(modifier *keys, device_context keyboard, struct io_uring ring, struct io_uring_cqe *cqe) {
+  queue_device_read(&ring, &keyboard);
+
+  puts("ring submitted");
+  io_uring_submit(&ring);
 
   while (true) {
-    int ret = io_uring_wait_cqe(&ring, &cqe);
-    if (ret < 0) {
+    int got_cqe = io_uring_wait_cqe(&ring, &cqe);
+    if (got_cqe < 0) {
       break;
     }
-
 
     device_context* context = io_uring_cqe_get_data(cqe);
 
@@ -292,14 +350,5 @@ int main() {
     }
   }
 
-  sleep(1);
-
-  ioctl(ui, UI_DEV_DESTROY);
-  close(ui);
-
-  io_uring_queue_exit(&ring);
-  ioctl(keyboard.fd, EVIOCGRAB, 0);
-  close(keyboard.fd);
   return 0;
 }
-
