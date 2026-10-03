@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <linux/input.h>
 #include <sys/time.h>
@@ -69,9 +71,15 @@ void display(state *key, int i) {
   if (key->flag == LOCKED) {
     state_repr = "locked";
   }
+  if (i==5) exit(1);
   printf("%s for %d %lu ms\n", state_repr, i, key->last);
+
+  // struct input_event syn = { .type = EV_SYN, .code = SYN_REPORT, .value = 0 };
+  // write(uinput_fd, &syn, sizeof(struct input_event));
   
 }
+
+// #define DEFER(cleanup) for (int _done = 0; !_done; (cleanup), _done = 1)
 
 void handle_event(struct input_event* event, state* keys) {
     if (event->type != EV_KEY) {
@@ -196,6 +204,12 @@ int main() {
   if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) < 0) { // force monotonic timestamps
       perror("failed to set monotonic clock");
   }
+
+  sleep(1);
+  if (ioctl(keyboard.fd, EVIOCGRAB, 1) < 0) {
+      perror("failed to grab device exclusively");
+  }
+
   if (keyboard.fd < 0) {
     fprintf(stderr, "failed to open handle to input device %s: currently skipped: ensure you are root\n", keyboard.path);
     return 1;
@@ -251,9 +265,9 @@ int main() {
       io_uring_submit(&ring);
     }
   }
-    if (keyboard.fd != UNINITIALIZED_FD) {
-      close(keyboard.fd);
-    }
+
+  close(keyboard.fd);
+  ioctl(keyboard.fd, EVIOCGRAB, 0);
 
   io_uring_queue_exit(&ring);
   return 0;
