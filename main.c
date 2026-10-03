@@ -221,10 +221,7 @@ int main() {
 
   uint64_t last_release_ms = 0;
   state keys[6];
-
-  for (int i = 0; i < 6; ++i) {
-    keys[i] = (state) { .last = 0, .flag = 0 };
-  }
+  memset(keys, 0, sizeof(keys));
 
   while (true) {
     int ret = io_uring_peek_cqe(&ring, &cqe);
