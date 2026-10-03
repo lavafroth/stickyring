@@ -12,6 +12,8 @@
 #include <liburing.h>
 #include <string.h>
 
+#include "modifier.c"
+
 #define QUEUE_DEPTH 16
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
 
@@ -35,17 +37,6 @@ int modifier_index(uint16_t code) {
   return -1;
 }
 
-typedef enum {
-  FREE = 0,
-  LATCHED = 1,
-  LOCKED = 2,
-} modifier_state;
-
-typedef struct {
-  uint64_t last;
-  modifier_state flag;
-} modifier;
-
 const int INPUT_EVENT_SIZE = sizeof(struct input_event);
 const int UNINITIALIZED_FD = -1;
 
@@ -66,18 +57,6 @@ uint64_t time_ms(struct timeval time) {
 
 uint64_t event_time_ms(const struct input_event *ev) {
   return time_ms(ev->time);
-}
-
-void display(modifier *key, int i) {
-  char *state_repr = "free";
-  if (key->flag == LATCHED) {
-    state_repr = "latched";
-  }
-  if (key->flag == LOCKED) {
-    state_repr = "locked";
-  }
-  printf("%s for %d at %lu ms\n", state_repr, i, key->last);
-
 }
 
 int emit(uint16_t type, uint16_t code, int32_t value) {
@@ -103,11 +82,11 @@ void handle_event(struct input_event* event, modifier* keys) {
       if (write(ui, event, sizeof(struct input_event)) < 0) {
         perror("failed to passthrough event to virtual device");
       };
-      for (int j = 0; j < 8; ++j) {
+      for (int j = 0; j < N_MODFIERS; ++j) {
         if (keys[j].flag == LATCHED) {
           keys[j].flag = FREE;
           emit(EV_KEY, MODIFIERS[j], 0);
-          display(keys + j, j);
+          display(keys, j);
         }
       }
       emit(EV_SYN, SYN_REPORT, 0);
@@ -130,7 +109,7 @@ void handle_event(struct input_event* event, modifier* keys) {
 
     key->flag = flag;
     key->last = current_release_ms;
-    display(key, i);
+    display(keys, i);
 
     emit(EV_KEY, event->code, flag != FREE);
     emit(EV_SYN, SYN_REPORT, 0);
@@ -279,7 +258,7 @@ int main__post_uinput_open(device_context keyboard, struct io_uring ring, struct
   int ret = 0;
   
   uint64_t last_release_ms = 0;
-  modifier keys[8];
+  modifier keys[N_MODFIERS];
   memset(keys, 0, sizeof(keys));
   
   // source: https://www.kernel.org/doc/html/v4.12/input/uinput.html
