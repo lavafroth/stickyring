@@ -28,18 +28,18 @@ int key_to_state(uint16_t code) {
   switch (code) {
     // shift
     case 42: return 0;
-    case 54: return 6;
+    case 54: return 1;
 
     // control
-    case 29: return 1;
-    case 97: return 5;
+    case 29: return 2;
+    case 97: return 3;
 
     // alt
-    case 56: return 3;
-    case 100: return 4;
+    case 56: return 4;
+    case 100: return 5;
 
     // super
-    case 125: return 2;
+    case 125: return 6;
     case 126: return 7;
     default: return -1;
   }
@@ -87,9 +87,6 @@ void display(state *key, int i) {
   if (i==5) exit(1);
   printf("%s for %d %lu ms\n", state_repr, i, key->last);
 
-  // struct input_event syn = { .type = EV_SYN, .code = SYN_REPORT, .value = 0 };
-  // write(uinput_fd, &syn, sizeof(struct input_event));
-  
 }
 
 // #define DEFER(cleanup) for (int _done = 0; !_done; (cleanup), _done = 1)
@@ -106,6 +103,8 @@ int emit(uint16_t type, uint16_t code, int32_t value) {
 
 
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
+const int KEYCODES[8] = {42,54,29,97,56,100,125,126};
+
 void handle_event(struct input_event* event, state* keys) {
     if (event->type != EV_KEY) {
       return;
@@ -113,32 +112,40 @@ void handle_event(struct input_event* event, state* keys) {
 
     int i = key_to_state(event->code);
     if (i == -1) {
-      write(ui, event, sizeof(struct input_event));
+      if (write(ui, event, sizeof(struct input_event)) < 0) {
+        perror("failed to passthrough event to virtual device");
+      };
+      for (int j = 0; j < 8; ++j) {
+        if (keys[j].flag == LATCHED) {
+          keys[j].flag = FREE;
+          emit(EV_KEY, KEYCODES[j], 0);
+          display(keys + j, j);
+        }
+      }
       emit(EV_SYN, SYN_REPORT, 0);
       return;
     }
 
-    if (event->value) { // 1 = pressed
+    if (event->value == 0) { // 1 = pressed
       return;
     };
 
 
     state *key = keys + i;
     uint64_t current_release_ms = event_time_ms(event);
-    if (key->last != 0) {
-      uint64_t elapsed_ms = current_release_ms - key->last;
-      if (elapsed_ms <= 200) {
-        key->flag = LOCKED;
-        key->last = current_release_ms;
-        display(key, i);
-        return;
-      }
+    uint64_t elapsed_ms = current_release_ms - key->last;
+
+    int flag = LOCKED;
+    if (elapsed_ms > 200) {
+      flag = NEXT_STATE[key->flag];
     }
 
-    key->flag = NEXT_STATE[key->flag];
+    key->flag = flag;
     key->last = current_release_ms;
     display(key, i);
-    // printf("[%s key] code: %d, state: %d\n", context->path, event->code, event->value);
+
+    emit(EV_KEY, event->code, flag != FREE);
+    emit(EV_SYN, SYN_REPORT, 0);
   
 }
 
@@ -215,11 +222,16 @@ int main() {
 
   if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) < 0) { // force monotonic timestamps
       perror("failed to set monotonic clock");
+      close(keyboard.fd);
+      return 1;
   }
 
   sleep(1);
+
   if (ioctl(keyboard.fd, EVIOCGRAB, 1) < 0) {
       perror("failed to grab device exclusively");
+      close(keyboard.fd);
+      return 1;
   }
 
   if (keyboard.fd < 0) {
@@ -273,25 +285,9 @@ int main() {
   sleep(1);
 
   while (true) {
-    int ret = io_uring_peek_cqe(&ring, &cqe);
+    int ret = io_uring_wait_cqe(&ring, &cqe);
     if (ret < 0) {
-
-      // struct timespec now_ts;
-      // if (clock_gettime(CLOCK_MONOTONIC, &now_ts) < 0) {
-      //   perror("failed to get current time");
-      //   exit(1);
-      // };
-    
-      // struct timeval now;
-      // now.tv_sec = now_ts.tv_sec;
-      // now.tv_usec = now_ts.tv_nsec / 1000;
-      // printf("now: %lu\n", time_ms(now));
-
-      // for (int i = 0; i < 6; ++i) {
-      //   if (keys[i].flag == LATCHED)
-      // }
-
-      continue;
+      break;
     }
 
 
