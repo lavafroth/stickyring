@@ -2,7 +2,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <fcntl.h>
-#include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -84,7 +83,6 @@ void display(state *key, int i) {
   if (key->flag == LOCKED) {
     state_repr = "locked";
   }
-  if (i==5) exit(1);
   printf("%s for %d %lu ms\n", state_repr, i, key->last);
 
 }
