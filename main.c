@@ -81,10 +81,14 @@ void display(state *key, int i) {
 
 // #define DEFER(cleanup) for (int _done = 0; !_done; (cleanup), _done = 1)
 
+const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
 void handle_event(struct input_event* event, state* keys) {
     if (event->type != EV_KEY) {
       return;
     }
+    if (event->value) { // 1 = pressed
+      return;
+    };
 
     int i = key_to_state(event->code);
     if (i == -1) {
@@ -92,38 +96,20 @@ void handle_event(struct input_event* event, state* keys) {
     }
 
     state *key = keys + i;
-    // printf("current key: %d, last: %lu, state: %u\n", i, key->last, key->flag);
-
-    if (event->value == 0) {
-      uint64_t current_release_ms = event_time_ms(event);
-
-      if (key->flag == FREE) {
-        key->flag = LATCHED;
+    uint64_t current_release_ms = event_time_ms(event);
+    if (key->last != 0) {
+      uint64_t elapsed_ms = current_release_ms - key->last;
+      if (elapsed_ms <= 200) {
+        key->flag = LOCKED;
         key->last = current_release_ms;
         display(key, i);
         return;
       }
-      if (key->flag == LOCKED) {
-        key->flag = FREE;
-        key->last = 0;
-        display(key, i);
-        return;
-      }
-
-      if (key->flag == LATCHED && key->last != 0) {
-        uint64_t elapsed_ms = current_release_ms - key->last;
-        if (elapsed_ms <= 200) {
-          key->flag = LOCKED;
-          key->last = 0;
-        } else {
-          key->flag = FREE;
-          key->last = 0;
-        }
-      }
-
-      key->last = current_release_ms;
-      display(key, i);
     }
+
+    key->flag = NEXT_STATE[key->flag];
+    key->last = current_release_ms;
+    display(key, i);
     // printf("[%s key] code: %d, state: %d\n", context->path, event->code, event->value);
   
 }
