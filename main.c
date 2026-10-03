@@ -23,35 +23,24 @@ typedef struct {
   struct input_event event;
 } device_context;
 
-int key_to_state(uint16_t code) {
-  switch (code) {
-    // shift
-    case 42: return 0;
-    case 54: return 1;
+const int MODIFIERS[] = {KEY_LEFTSHIFT,KEY_RIGHTSHIFT,29,97,56,100,125,126};
+const int N_MODFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
 
-    // control
-    case 29: return 2;
-    case 97: return 3;
-
-    // alt
-    case 56: return 4;
-    case 100: return 5;
-
-    // super
-    case 125: return 6;
-    case 126: return 7;
-    default: return -1;
-  }
+int modifier_index(uint16_t code) {
+  for (int i = 0; i < N_MODFIERS; ++i) if (MODIFIERS[i] == code) return i;
+  return -1;
 }
 
-const int FREE = 0;
-const int LATCHED = 1;
-const int LOCKED = 2;
+typedef enum {
+  FREE = 0,
+  LATCHED = 1,
+  LOCKED = 2,
+} modifier_state;
 
 typedef struct {
   uint64_t last;
-  int flag;
-} state;
+  modifier_state flag;
+} modifier;
 
 const int INPUT_EVENT_SIZE = sizeof(struct input_event);
 const int UNINITIALIZED_FD = -1;
@@ -75,7 +64,7 @@ uint64_t event_time_ms(const struct input_event *ev) {
   return time_ms(ev->time);
 }
 
-void display(state *key, int i) {
+void display(modifier *key, int i) {
   char *state_repr = "free";
   if (key->flag == LATCHED) {
     state_repr = "latched";
@@ -83,11 +72,9 @@ void display(state *key, int i) {
   if (key->flag == LOCKED) {
     state_repr = "locked";
   }
-  printf("%s for %d %lu ms\n", state_repr, i, key->last);
+  printf("%s for %d at %lu ms\n", state_repr, i, key->last);
 
 }
-
-// #define DEFER(cleanup) for (int _done = 0; !_done; (cleanup), _done = 1)
 
 int emit(uint16_t type, uint16_t code, int32_t value) {
   struct input_event ev;
@@ -101,14 +88,13 @@ int emit(uint16_t type, uint16_t code, int32_t value) {
 
 
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
-const int KEYCODES[8] = {42,54,29,97,56,100,125,126};
 
-void handle_event(struct input_event* event, state* keys) {
+void handle_event(struct input_event* event, modifier* keys) {
     if (event->type != EV_KEY) {
       return;
     }
 
-    int i = key_to_state(event->code);
+    int i = modifier_index(event->code);
     if (i == -1) {
       if (write(ui, event, sizeof(struct input_event)) < 0) {
         perror("failed to passthrough event to virtual device");
@@ -116,7 +102,7 @@ void handle_event(struct input_event* event, state* keys) {
       for (int j = 0; j < 8; ++j) {
         if (keys[j].flag == LATCHED) {
           keys[j].flag = FREE;
-          emit(EV_KEY, KEYCODES[j], 0);
+          emit(EV_KEY, MODIFIERS[j], 0);
           display(keys + j, j);
         }
       }
@@ -129,7 +115,7 @@ void handle_event(struct input_event* event, state* keys) {
     };
 
 
-    state *key = keys + i;
+    modifier *key = keys + i;
     uint64_t current_release_ms = event_time_ms(event);
     uint64_t elapsed_ms = current_release_ms - key->last;
 
@@ -242,7 +228,7 @@ int main() {
   io_uring_submit(&ring);
 
   uint64_t last_release_ms = 0;
-  state keys[8];
+  modifier keys[8];
   memset(keys, 0, sizeof(keys));
   
   // source: https://www.kernel.org/doc/html/v4.12/input/uinput.html
