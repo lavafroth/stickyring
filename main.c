@@ -132,7 +132,7 @@ int find_keyboard_event_path(char *out_path) {
 
 int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path) {
     char line[256];
-    bool is_keyboard = false;
+    int is_keyboard = 0;
 
     while (true) {
       bool empty_line = fgets(line, sizeof(line), fp) == NULL;
@@ -141,7 +141,7 @@ int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path) {
       bool end_of_section = empty_line || first_char == '\n' || first_char == '\r';
 
       if (end_of_section) {
-          is_keyboard = false;
+          is_keyboard = 0;
           continue;
       }
 
@@ -149,10 +149,14 @@ int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path) {
         break;
       }
 
+      if (strncmp(line, "N: Name=", 8) == 0) {
+        is_keyboard += strstr(line, "keyboard") != NULL;
+      }
+
       bool handler_prefix = strncmp(line, "H: Handlers=", 12) == 0;
       if (handler_prefix) {
 
-        is_keyboard |= strstr(line, "kbd") != NULL;
+        is_keyboard += strstr(line, "kbd") != NULL;
         char *event_identifier = strstr(line, "event");
         char *event_end = strstr(event_identifier, " ");
 
@@ -162,7 +166,7 @@ int find_keyboard_event_path__post_fopen(FILE* fp, char *out_path) {
           *event_end = 0;
         }
 
-        if (event_identifier && is_keyboard) {
+        if (event_identifier && is_keyboard == 2) {
             snprintf(out_path, PATH_MAX, "/dev/input/%s", event_identifier);
             return 0;
         }
