@@ -4,14 +4,19 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <linux/input.h>
+#include <linux/uinput.h>
 #include <sys/time.h>
 #include <liburing.h>
 #include <string.h>
 
 #define QUEUE_DEPTH 16
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
+
+unsigned int clk = CLOCK_MONOTONIC;
+static int ui = -1;
 
 typedef struct {
   int fd;
@@ -21,13 +26,21 @@ typedef struct {
 
 int key_to_state(uint16_t code) {
   switch (code) {
+    // shift
     case 42: return 0;
+    case 54: return 6;
+
+    // control
     case 29: return 1;
-    case 125: return 2;
+    case 97: return 5;
+
+    // alt
     case 56: return 3;
     case 100: return 4;
-    case 97: return 5;
-    case 54: return 6;
+
+    // super
+    case 125: return 2;
+    case 126: return 7;
     default: return -1;
   }
 }
@@ -81,19 +94,34 @@ void display(state *key, int i) {
 
 // #define DEFER(cleanup) for (int _done = 0; !_done; (cleanup), _done = 1)
 
+int emit(uint16_t type, uint16_t code, int32_t value) {
+  struct input_event ev;
+  memset(&ev, 0, sizeof(ev));
+  ev.code = code;
+  ev.type = type;
+  ev.value = value;
+
+  return write(ui, &ev, sizeof(ev));
+}
+
+
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
 void handle_event(struct input_event* event, state* keys) {
     if (event->type != EV_KEY) {
       return;
     }
+
+    int i = key_to_state(event->code);
+    if (i == -1) {
+      write(ui, event, sizeof(struct input_event));
+      emit(EV_SYN, SYN_REPORT, 0);
+      return;
+    }
+
     if (event->value) { // 1 = pressed
       return;
     };
 
-    int i = key_to_state(event->code);
-    if (i == -1) {
-      return;
-    }
 
     state *key = keys + i;
     uint64_t current_release_ms = event_time_ms(event);
@@ -165,8 +193,6 @@ int find_keyboard_event_path(char *out_path) {
     return -1;
 }
 
-unsigned int clk = CLOCK_MONOTONIC;
-
 int main() {
   char device_path[PATH_MAX];
 
@@ -206,8 +232,45 @@ int main() {
   io_uring_submit(&ring);
 
   uint64_t last_release_ms = 0;
-  state keys[6];
+  state keys[8];
   memset(keys, 0, sizeof(keys));
+  
+  // source: https://www.kernel.org/doc/html/v4.12/input/uinput.html
+  struct uinput_setup usetup;
+  memset(&usetup, 0, sizeof(usetup));
+  usetup.id.bustype = BUS_USB;
+  usetup.id.vendor = 0x7047;
+  usetup.id.product = 0x1337;
+  strcpy(usetup.name, "sticky keys daemon");
+
+  ui = open("/dev/uinput", O_NONBLOCK | O_WRONLY);
+  if (ui < 0) {
+    perror("failed to open uinput");
+    return 1;
+  }
+
+  if(ioctl(ui, UI_SET_EVBIT, 1) < 0) {
+    perror("failed to set EVBIT");
+    return 1;
+  }
+
+  for (int i = 0; i < KEY_CNT; ++i) {
+    if(ioctl(ui, UI_SET_KEYBIT, i) < 0) {
+      perror("failed to set KEYBIT");
+      return 1;
+    }
+  }
+
+  if(ioctl(ui, UI_DEV_SETUP, &usetup) < 0) {
+    perror("failed to set up virtual device");
+    return 1;
+  }
+  if(ioctl(ui, UI_DEV_CREATE) < 0) {
+    perror("failed to create virtual device");
+    return 1;
+  }
+
+  sleep(1);
 
   while (true) {
     int ret = io_uring_peek_cqe(&ring, &cqe);
@@ -249,10 +312,14 @@ int main() {
     }
   }
 
-  close(keyboard.fd);
-  ioctl(keyboard.fd, EVIOCGRAB, 0);
+  sleep(1);
+
+  ioctl(ui, UI_DEV_DESTROY);
+  close(ui);
 
   io_uring_queue_exit(&ring);
+  ioctl(keyboard.fd, EVIOCGRAB, 0);
+  close(keyboard.fd);
   return 0;
 }
 
