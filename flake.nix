@@ -30,6 +30,7 @@
             liburing
             clang
             llvmPackages.lldb
+            just
           ];
         };
 

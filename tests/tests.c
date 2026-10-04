@@ -7,7 +7,8 @@
 #include "../src/modifier.c"
 #include "../src/state_machine.c"
 
-int main() {
+void test_free_all_latched() {
+  puts("entering test_free_all_latched");
   modifier keys[N_MODFIERS];
   memset(keys, 0, sizeof(keys));
   keys[0].flag = LATCHED;
@@ -19,4 +20,9 @@ int main() {
   assert(keys[0].flag == FREE);
   assert(keys[2].flag == LOCKED);
   assert(keys[7].flag == FREE);
+  puts("test passed");
+}
+
+int main() {
+  test_free_all_latched();
 }
