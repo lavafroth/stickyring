@@ -66,22 +66,14 @@ void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
   io_uring_sqe_set_data(sqe, time);
 }
 
-uint64_t time_ms(struct timeval time) {
+uint64_t event_time_ms(const struct input_event *ev) {
+  struct timeval time = ev->time;
   return ((uint64_t)time.tv_sec * 1000) + ((uint64_t)time.tv_usec / 1000);
 }
 
-uint64_t event_time_ms(const struct input_event *ev) {
-  return time_ms(ev->time);
-}
-
 int emit(uint16_t type, uint16_t code, int32_t value) {
-  struct input_event ev;
-  memset(&ev, 0, sizeof(ev));
-  ev.code = code;
-  ev.type = type;
-  ev.value = value;
-
-  return write(ui, &ev, sizeof(ev));
+  struct input_event event = { { 0, 0 }, type, code, value };
+  return write(ui, &event, sizeof(event));
 }
 
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
