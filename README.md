@@ -7,6 +7,15 @@ A minimal but incomplete port of my sticky keys tool powered by `io_uring`.
 
 ### Build from Source
 
+#### With Nix
+
+```sh
+nix build
+sudo ./result/bin/stickyring
+```
+
+#### Without Nix
+
 Prerequisites:
 - `gcc`
 - `just`
@@ -14,7 +23,7 @@ Prerequisites:
 
 ```sh
 just build
-sudo ./build/sticky
+sudo ./build/stickyring
 ```
 
 ### Systemd Service
