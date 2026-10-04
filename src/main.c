@@ -15,7 +15,10 @@
 #include <time.h>
 #include <unistd.h>
 
+int emit(uint16_t type, uint16_t code, int32_t value);
+
 #include "modifier.c"
+#include "state_machine.c"
 
 #define QUEUE_DEPTH 16
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
@@ -33,18 +36,6 @@ typedef struct {
   const char *path;
   struct input_event event;
 } device_context;
-
-const int MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
-                         KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
-                         KEY_LEFTALT,   KEY_RIGHTALT};
-const int N_MODFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
-
-int modifier_index(uint16_t code) {
-  for (int i = 0; i < N_MODFIERS; ++i)
-    if (MODIFIERS[i] == code)
-      return i;
-  return -1;
-}
 
 void queue_device_read(struct io_uring *ring, device_context *context) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
@@ -76,8 +67,6 @@ int emit(uint16_t type, uint16_t code, int32_t value) {
   return write(ui, &event, sizeof(event));
 }
 
-const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
-
 void handle_event(struct input_event *event, modifier *keys) {
   if (event->type != EV_KEY) {
     return;
@@ -88,14 +77,7 @@ void handle_event(struct input_event *event, modifier *keys) {
     if (write(ui, event, sizeof(struct input_event)) < 0) {
       perror("failed to passthrough event to virtual device");
     };
-    for (int j = 0; j < N_MODFIERS; ++j) {
-      if (keys[j].flag == LATCHED) {
-        keys[j].flag = FREE;
-        emit(EV_KEY, MODIFIERS[j], 0);
-        display(keys, j);
-      }
-    }
-    emit(EV_SYN, SYN_REPORT, 0);
+    free_all_latched(keys);
     return;
   }
 
