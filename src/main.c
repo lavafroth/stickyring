@@ -345,6 +345,10 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
   while (true) {
     int got_cqe = io_uring_wait_cqe(&ring, &cqe);
     if (got_cqe < 0) {
+      if (got_cqe == -EWOULDBLOCK || got_cqe == -EAGAIN || got_cqe == -EINTR) {
+        continue;
+      }
+      printf("kernel returned error on waiting for event: %d", got_cqe);
       break;
     }
 
