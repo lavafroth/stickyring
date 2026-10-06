@@ -15,10 +15,8 @@
 #include <time.h>
 #include <unistd.h>
 
-int emit(uint16_t type, uint16_t code, int32_t value);
-
-#include "modifier.c"
-#include "state_machine.c"
+#define STATE_MACHINE_IMPLEMENTATION
+#include "state_machine.h"
 
 #define QUEUE_DEPTH 16
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
@@ -62,22 +60,17 @@ uint64_t event_time_ms(const struct input_event *ev) {
   return ((uint64_t)time.tv_sec * 1000) + ((uint64_t)time.tv_usec / 1000);
 }
 
-int emit(uint16_t type, uint16_t code, int32_t value) {
-  struct input_event event = { { 0, 0 }, type, code, value };
-  return write(ui, &event, sizeof(event));
-}
-
-void handle_event(struct input_event *event, modifier *keys) {
+void handle_event(int fd, struct input_event *event, modifier *keys) {
   if (event->type != EV_KEY) {
     return;
   }
 
   int i = modifier_index(event->code);
   if (i == -1) {
-    if (write(ui, event, sizeof(struct input_event)) < 0) {
+    if (write(fd, event, sizeof(struct input_event)) < 0) {
       perror("failed to passthrough event to virtual device");
     };
-    free_all_latched(keys);
+    free_all_latched(fd, keys);
     return;
   }
 
@@ -98,8 +91,8 @@ void handle_event(struct input_event *event, modifier *keys) {
   key->last = current_release_ms;
   display(keys, i);
 
-  emit(EV_KEY, event->code, flag != FREE);
-  emit(EV_SYN, SYN_REPORT, 0);
+  event_emit(fd, EV_KEY, event->code, flag != FREE);
+  event_emit(fd, EV_SYN, SYN_REPORT, 0);
 }
 
 STAGE int find_keyboard_event_path__post_fopen(FILE *fp, char *out_path);
@@ -205,8 +198,7 @@ int main__post_uring_init(const char *device_path, struct io_uring ring,
                           struct io_uring_cqe *cqe) {
   int ret = 0;
 
-  device_context keyboard = {.path = device_path, .fd = UNINITIALIZED_FD};
-  keyboard.fd = open(keyboard.path, O_RDONLY);
+  device_context keyboard = {.path = device_path, .fd = open(device_path, O_RDONLY)};
   if (keyboard.fd < 0) {
     fprintf(stderr,
             "failed to open handle to input device %s: currently skipped: "
@@ -367,7 +359,7 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
     }
 
     struct input_event *event = &(context->event);
-    handle_event(event, keys);
+    handle_event(ui, event, keys);
 
     io_uring_cqe_seen(&ring, cqe);
     if (context && context->fd != UNINITIALIZED_FD) {
