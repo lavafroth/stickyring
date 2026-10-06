@@ -7,21 +7,23 @@ typedef enum {
   FREE = 0,
   LATCHED = 1,
   LOCKED = 2,
-} modifier_state;
+} ModifierState;
 
 typedef struct {
   uint64_t last;
-  modifier_state flag;
-} modifier;
+  ModifierState flag;
+} Modifier;
+
+typedef struct input_event InputEvent;
 
 typedef struct {
-  modifier *keys;
+  Modifier *keys;
   bool capsl;
   int device_fd;
   int virtual_fd;
   bool tainted;
-  struct input_event* buffer_event;
-} state_machine;
+  InputEvent* buffer_event;
+} StateMachine;
 
 #endif
 
@@ -42,8 +44,8 @@ const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
 
 static const int POSITION_EMPTY[] = {-1, -1};
 
-void display(modifier *keys, int i) {
-  modifier key = keys[i];
+void display(Modifier *keys, int i) {
+  Modifier key = keys[i];
   char *state_repr = "free";
   if (key.flag == LATCHED)
     state_repr = "latched";
@@ -67,15 +69,15 @@ int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 // Free all latched keys on the virtual device.
 // Useful for clearing latched states when either a non modifier key is pressed
 // or TODO: a tap, tap-drag, tap-drag-drag finishes and touchpad support is enabled.
-void state_machine__free_latched(state_machine *machine) {
-  for (modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
+void state_machine__free_latched(StateMachine *machine) {
+  for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
     if (key->flag == LATCHED) {
       key->flag = FREE;
     }
   }
 }
 
-void state_machine__flush(state_machine *machine) {
+void state_machine__flush(StateMachine *machine) {
   if (!(machine->tainted)) {
     return;
   }
@@ -111,8 +113,8 @@ uint64_t event_time_ms(const struct input_event *ev) {
   return ((uint64_t)time.tv_sec * 1000) + ((uint64_t)time.tv_usec / 1000);
 }
 
-void state_machine__interact_modifier(state_machine *machine, struct input_event *event, int i) {
-  modifier *key = machine->keys + i;
+void state_machine__interact_modifier(StateMachine *machine, InputEvent *event, int i) {
+  Modifier *key = machine->keys + i;
   uint64_t current_release_ms = event_time_ms(event);
   uint64_t elapsed_ms = current_release_ms - key->last;
 
@@ -129,9 +131,9 @@ void state_machine__interact_modifier(state_machine *machine, struct input_event
   key->last = current_release_ms;
 }
 
-void state_machine__interact(state_machine *machine, struct input_event *event) {
+void state_machine__interact(StateMachine *machine, InputEvent *event) {
   int i = modifier_index(event->code);
-  if (i == 5) exit(1);
+  // if (i == 5) exit(1);
   if (i < 0) {
     state_machine__free_latched(machine);
     machine->buffer_event = event;

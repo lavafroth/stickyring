@@ -27,26 +27,32 @@
 unsigned int clk = CLOCK_MONOTONIC;
 const int UNINITIALIZED_FD = -1;
 static int ui = UNINITIALIZED_FD;
-const int INPUT_EVENT_SIZE = sizeof(struct input_event);
 
 typedef struct {
   int fd;
   const char *path;
-  struct input_event event;
-} device_context;
+  InputEvent event;
+} DeviceContext;
 
-void queue_device_read(struct io_uring *ring, device_context *context) {
-  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+typedef struct io_uring IoUring;
+typedef struct io_uring_sqe SQE;
+typedef struct io_uring_cqe CQE;
+typedef struct uinput_setup USetup;
+
+
+void queue_device_read(IoUring *ring, DeviceContext *context) {
+  SQE *sqe = io_uring_get_sqe(ring);
   if (!sqe) {
     return;
   }
 
-  io_uring_prep_read(sqe, context->fd, &(context->event), INPUT_EVENT_SIZE, 0);
+  io_uring_prep_read(sqe, context->fd, &(context->event), sizeof(InputEvent),
+                     0);
   io_uring_sqe_set_data(sqe, context);
 }
 
-void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
-  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+void queue_time_read(IoUring *ring, int fd, uint64_t *time) {
+  SQE *sqe = io_uring_get_sqe(ring);
   if (!sqe) {
     return;
   }
@@ -55,9 +61,10 @@ void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
   io_uring_sqe_set_data(sqe, time);
 }
 
-void handle_event(state_machine *machine, struct input_event *event) {
+void handle_event(StateMachine *machine, InputEvent *event) {
   if (event->type == EV_KEY) {
-    if (event->code == BTN_LEFT || event->code == BTN_RIGHT || event->code == BTN_TOUCH || event->code == BTN_TOOL_FINGER) {
+    if (event->code == BTN_LEFT || event->code == BTN_RIGHT ||
+        event->code == BTN_TOUCH || event->code == BTN_TOOL_FINGER) {
       puts("respond touch");
     } else {
       state_machine__interact(machine, event);
@@ -190,30 +197,25 @@ int find_touchpad_event_path(char *out_path) {
   return ret;
 }
 
-STAGE int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe);
-STAGE int main__post_keyboard_open(device_context keyboard,
-                                   struct io_uring ring,
-                                   struct io_uring_cqe *cqe);
-STAGE int main__post_keyboard_grab(device_context keyboard,
-                                   struct io_uring ring,
-                                   struct io_uring_cqe *cqe);
-STAGE int main__post_uinput_open(device_context keyboard,
-                                 device_context touchpad, struct io_uring ring,
-                                 struct io_uring_cqe *cqe);
-STAGE int main__post_virtual_device_create(modifier *keys,
-                                           device_context keyboard,
-                                           device_context touchpad,
-                                           struct io_uring ring,
-                                           struct io_uring_cqe *cqe);
-STAGE int main__post_touchpad_open(device_context keyboard,
-                                   device_context touchpad,
-                                   struct io_uring ring,
-                                   struct io_uring_cqe *cqe);
+STAGE int main__post_uring_init(IoUring ring, CQE *cqe);
+STAGE int main__post_keyboard_open(DeviceContext keyboard, IoUring ring,
+                                   CQE *cqe);
+STAGE int main__post_keyboard_grab(DeviceContext keyboard, IoUring ring,
+                                   CQE *cqe);
+STAGE int main__post_uinput_open(DeviceContext keyboard, DeviceContext touchpad,
+                                 IoUring ring, CQE *cqe);
+STAGE int main__post_virtual_device_create(Modifier *keys,
+                                           DeviceContext keyboard,
+                                           DeviceContext touchpad, IoUring ring,
+                                           CQE *cqe);
+STAGE int main__post_touchpad_open(DeviceContext keyboard,
+                                   DeviceContext touchpad, IoUring ring,
+                                   CQE *cqe);
 int main() {
   int ret = 0;
 
-  struct io_uring ring;
-  struct io_uring_cqe *cqe;
+  IoUring ring;
+  CQE *cqe;
 
   if (io_uring_queue_init(QUEUE_DEPTH, &ring, 0) < 0) {
     perror("io_uring initialization failed");
@@ -226,7 +228,7 @@ int main() {
   return ret;
 }
 
-int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe) {
+int main__post_uring_init(IoUring ring, CQE *cqe) {
   int ret = 0;
 
   char device_path[PATH_MAX];
@@ -236,8 +238,8 @@ int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe) {
     return 1;
   }
 
-  device_context keyboard = {.path = device_path,
-                             .fd = open(device_path, O_RDWR)};
+  DeviceContext keyboard = {.path = device_path,
+                            .fd = open(device_path, O_RDWR)};
   if (keyboard.fd < 0) {
     fprintf(stderr,
             "failed to open handle to input device %s: currently skipped: "
@@ -252,8 +254,8 @@ int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe) {
   return ret;
 }
 
-int main__post_keyboard_open(device_context keyboard, struct io_uring ring,
-                             struct io_uring_cqe *cqe) {
+int main__post_keyboard_open(DeviceContext keyboard, IoUring ring,
+                             CQE *cqe) {
   int ret = 0;
 
   if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) <
@@ -275,8 +277,8 @@ int main__post_keyboard_open(device_context keyboard, struct io_uring ring,
   return ret;
 }
 
-int main__post_keyboard_grab(device_context keyboard, struct io_uring ring,
-                             struct io_uring_cqe *cqe) {
+int main__post_keyboard_grab(DeviceContext keyboard, IoUring ring,
+                             CQE *cqe) {
   int ret = 0;
 
   char device_path[PATH_MAX];
@@ -286,8 +288,8 @@ int main__post_keyboard_grab(device_context keyboard, struct io_uring ring,
   }
 
   printf("%s\n", device_path);
-  device_context touchpad = {.path = device_path,
-                             .fd = open(device_path, O_RDONLY)};
+  DeviceContext touchpad = {.path = device_path,
+                            .fd = open(device_path, O_RDONLY)};
   if (touchpad.fd < 0) {
     fprintf(stderr,
             "failed to open handle to input device %s: currently skipped: "
@@ -306,8 +308,8 @@ int main__post_keyboard_grab(device_context keyboard, struct io_uring ring,
   return ret;
 }
 
-int main__post_touchpad_open(device_context keyboard, device_context touchpad,
-                             struct io_uring ring, struct io_uring_cqe *cqe) {
+int main__post_touchpad_open(DeviceContext keyboard, DeviceContext touchpad,
+                             IoUring ring, CQE *cqe) {
 
   int ret = 0;
 
@@ -323,17 +325,17 @@ int main__post_touchpad_open(device_context keyboard, device_context touchpad,
   return ret;
 }
 
-int main__post_uinput_open(device_context keyboard, device_context touchpad,
-                           struct io_uring ring, struct io_uring_cqe *cqe) {
+int main__post_uinput_open(DeviceContext keyboard, DeviceContext touchpad,
+                           IoUring ring, CQE *cqe) {
   int ret = 0;
 
   uint64_t last_release_ms = 0;
-  modifier keys[N_MODFIERS];
+  Modifier keys[N_MODFIERS];
   memset(keys, 0, sizeof(keys));
 
   // source: https://www.kernel.org/doc/html/v4.12/input/uinput.html
-  struct uinput_setup usetup;
-  memset(&usetup, 0, sizeof(usetup));
+  USetup usetup;
+  memset(&usetup, 0, sizeof(USetup));
   usetup.id.bustype = BUS_USB;
   usetup.id.vendor = 0x7047;
   usetup.id.product = 0x1337;
@@ -369,20 +371,20 @@ int main__post_uinput_open(device_context keyboard, device_context touchpad,
   return ret;
 }
 
-int main__post_virtual_device_create(modifier *keys, device_context keyboard,
-                                     device_context touchpad,
-                                     struct io_uring ring,
-                                     struct io_uring_cqe *cqe) {
+int main__post_virtual_device_create(Modifier *keys, DeviceContext keyboard,
+                                     DeviceContext touchpad, IoUring ring,
+                                     CQE *cqe) {
   queue_device_read(&ring, &keyboard);
   queue_device_read(&ring, &touchpad);
 
-  state_machine machine = {.keys = keys,
-                           .capsl = false,
-                           .device_fd = keyboard.fd,
-                           .virtual_fd = ui,
-                           .buffer_event = NULL,
-                           .tainted = false,
-                         };
+  StateMachine machine = {
+      .keys = keys,
+      .capsl = false,
+      .device_fd = keyboard.fd,
+      .virtual_fd = ui,
+      .buffer_event = NULL,
+      .tainted = false,
+  };
 
   puts("ring submitted");
   io_uring_submit(&ring);
@@ -432,15 +434,15 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
       continue;
     };
 
-    device_context *context = io_uring_cqe_get_data(cqe);
+    DeviceContext *context = io_uring_cqe_get_data(cqe);
 
-    if (cqe->res != INPUT_EVENT_SIZE) {
+    if (cqe->res != sizeof(InputEvent)) {
       fprintf(stderr, "incomplete input event data found for %s: skipping\n",
               context->path);
       continue;
     }
 
-    struct input_event *event = &(context->event);
+    InputEvent *event = &(context->event);
     handle_event(&machine, event);
 
     if (context) {
