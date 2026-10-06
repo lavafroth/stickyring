@@ -28,6 +28,11 @@ typedef struct {
 
 #include <linux/input.h>
 
+#define TOUCH_RELEASED = 0;
+#define TOUCH_HELD = 1;
+#define COORDINATE_EMPTY = -1;
+const int [2]POSITION_EMPTY = {-1, -1};
+
 static const int MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
                                 KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
                                 KEY_LEFTALT,   KEY_RIGHTALT};

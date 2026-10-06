@@ -55,12 +55,12 @@ void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
   io_uring_sqe_set_data(sqe, time);
 }
 
-void handle_event(state_machine* machine, struct input_event *event) {
+void handle_event(state_machine *machine, struct input_event *event) {
   if (event->type == EV_KEY) {
     state_machine__interact(machine, event);
   }
-  // if (event->type == EV_REL) {
-    // state_machine__interact(machine, event);
+  // if (event->type == EV_ABS) {
+  // state_machine__interact(machine, event);
   // }
   state_machine__flush(machine);
 }
@@ -100,7 +100,7 @@ int find_keyboard_event_path__post_fopen(FILE *fp, char *out_path) {
     }
 
     if (strncmp(line, "N: Name=", 8) == 0) {
-      is_keyboard += strstr(line, "keyboard") != NULL;
+      is_keyboard += strcasestr(line, "keyboard") != NULL;
     }
 
     bool handler_prefix = strncmp(line, "H: Handlers=", 12) == 0;
@@ -125,30 +125,85 @@ int find_keyboard_event_path__post_fopen(FILE *fp, char *out_path) {
   return 0;
 }
 
-STAGE int main__post_uring_init(const char *device_path, struct io_uring ring,
-                                struct io_uring_cqe *cqe);
+STAGE int find_touchpad_event_path__post_fopen(FILE *fp, char *out_path) {
+  char line[256];
+  int touchpad = 0;
+
+  while (true) {
+    bool empty_line = fgets(line, sizeof(line), fp) == NULL;
+
+    char first_char = line[0];
+    bool end_of_section =
+        empty_line || first_char == '\n' || first_char == '\r';
+
+    if (end_of_section) {
+      touchpad = 0;
+      continue;
+    }
+
+    if (empty_line) {
+      break;
+    }
+
+    if (strncmp(line, "N: Name=", 8) == 0) {
+      touchpad += strcasestr(line, "touchpad") != NULL;
+    }
+
+    bool handler_prefix = strncmp(line, "H: Handlers=", 12) == 0;
+    if (handler_prefix) {
+
+      touchpad += strstr(line, "mouse") != NULL;
+      char *event_identifier = strstr(line, "event");
+      char *event_end = strstr(event_identifier, " ");
+
+      // if space is found, terminate string there,
+      // else event name is at the end already null terminated
+      if (event_end != NULL) {
+        *event_end = 0;
+      }
+
+      if (event_identifier && touchpad == 2) {
+        snprintf(out_path, PATH_MAX, "/dev/input/%s", event_identifier);
+        return 0;
+      }
+    }
+  }
+  return 0;
+}
+
+int find_touchpad_event_path(char *out_path) {
+  FILE *fp = fopen(PROC_INPUT_DEVICES, "r");
+  if (!fp) {
+    perror("Failed to open " PROC_INPUT_DEVICES);
+    return -1;
+  }
+
+  int ret = find_touchpad_event_path__post_fopen(fp, out_path);
+  fclose(fp);
+  return ret;
+}
+
+STAGE int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe);
 STAGE int main__post_keyboard_open(device_context keyboard,
                                    struct io_uring ring,
                                    struct io_uring_cqe *cqe);
 STAGE int main__post_keyboard_grab(device_context keyboard,
                                    struct io_uring ring,
                                    struct io_uring_cqe *cqe);
-STAGE int main__post_uinput_open(device_context keyboard, struct io_uring ring,
+STAGE int main__post_uinput_open(device_context keyboard,
+                                 device_context touchpad, struct io_uring ring,
                                  struct io_uring_cqe *cqe);
 STAGE int main__post_virtual_device_create(modifier *keys,
                                            device_context keyboard,
+                                           device_context touchpad,
                                            struct io_uring ring,
                                            struct io_uring_cqe *cqe);
-
+STAGE int main__post_touchpad_open(device_context keyboard,
+                                   device_context touchpad,
+                                   struct io_uring ring,
+                                   struct io_uring_cqe *cqe);
 int main() {
   int ret = 0;
-
-  char device_path[PATH_MAX];
-
-  if (find_keyboard_event_path(device_path) < 0) {
-    fprintf(stderr, "unable to find a path to the keyboard device\n");
-    return 1;
-  }
 
   struct io_uring ring;
   struct io_uring_cqe *cqe;
@@ -158,17 +213,24 @@ int main() {
     return 1;
   }
 
-  ret = main__post_uring_init(device_path, ring, cqe);
+  ret = main__post_uring_init(ring, cqe);
   io_uring_queue_exit(&ring);
 
   return ret;
 }
 
-int main__post_uring_init(const char *device_path, struct io_uring ring,
-                          struct io_uring_cqe *cqe) {
+int main__post_uring_init(struct io_uring ring, struct io_uring_cqe *cqe) {
   int ret = 0;
 
-  device_context keyboard = {.path = device_path, .fd = open(device_path, O_RDWR)};
+  char device_path[PATH_MAX];
+
+  if (find_keyboard_event_path(device_path) < 0) {
+    fprintf(stderr, "unable to find a path to the keyboard device\n");
+    return 1;
+  }
+
+  device_context keyboard = {.path = device_path,
+                             .fd = open(device_path, O_RDWR)};
   if (keyboard.fd < 0) {
     fprintf(stderr,
             "failed to open handle to input device %s: currently skipped: "
@@ -210,20 +272,52 @@ int main__post_keyboard_grab(device_context keyboard, struct io_uring ring,
                              struct io_uring_cqe *cqe) {
   int ret = 0;
 
+  char device_path[PATH_MAX];
+  if (find_touchpad_event_path(device_path) < 0) {
+    fprintf(stderr, "unable to find a path to the touchpad device\n");
+    return 1;
+  }
+
+  printf("%s\n", device_path);
+  device_context touchpad = {.path = device_path,
+                             .fd = open(device_path, O_RDONLY)};
+  if (touchpad.fd < 0) {
+    fprintf(stderr,
+            "failed to open handle to input device %s: currently skipped: "
+            "ensure you are root\n",
+            touchpad.path);
+    return 1;
+  }
+  if (ioctl(touchpad.fd, EVIOCSCLOCKID, &clk) <
+      0) { // force monotonic timestamps
+    perror("failed to set monotonic clock");
+    return 1;
+  }
+
+  ret = main__post_touchpad_open(keyboard, touchpad, ring, cqe);
+  close(touchpad.fd);
+  return ret;
+}
+
+int main__post_touchpad_open(device_context keyboard, device_context touchpad,
+                             struct io_uring ring, struct io_uring_cqe *cqe) {
+
+  int ret = 0;
+
   ui = open("/dev/uinput", O_NONBLOCK | O_WRONLY);
   if (ui < 0) {
     perror("failed to open uinput");
     return 1;
   }
 
-  ret = main__post_uinput_open(keyboard, ring, cqe);
+  ret = main__post_uinput_open(keyboard, touchpad, ring, cqe);
   close(ui);
 
   return ret;
 }
 
-int main__post_uinput_open(device_context keyboard, struct io_uring ring,
-                           struct io_uring_cqe *cqe) {
+int main__post_uinput_open(device_context keyboard, device_context touchpad,
+                           struct io_uring ring, struct io_uring_cqe *cqe) {
   int ret = 0;
 
   uint64_t last_release_ms = 0;
@@ -261,7 +355,7 @@ int main__post_uinput_open(device_context keyboard, struct io_uring ring,
   }
 
   sleep(1);
-  ret = main__post_virtual_device_create(keys, keyboard, ring, cqe);
+  ret = main__post_virtual_device_create(keys, keyboard, touchpad, ring, cqe);
   sleep(1);
   ioctl(ui, UI_DEV_DESTROY);
 
@@ -269,11 +363,17 @@ int main__post_uinput_open(device_context keyboard, struct io_uring ring,
 }
 
 int main__post_virtual_device_create(modifier *keys, device_context keyboard,
+                                     device_context touchpad,
                                      struct io_uring ring,
                                      struct io_uring_cqe *cqe) {
   queue_device_read(&ring, &keyboard);
+  queue_device_read(&ring, &touchpad);
 
-  state_machine machine = {.keys = keys, .capsl = false, .device_fd = keyboard.fd, ui, .buffer_event = NULL };
+  state_machine machine = {.keys = keys,
+                           .capsl = false,
+                           .device_fd = keyboard.fd,
+                           .virtual_fd = ui,
+                           .buffer_event = NULL};
 
   puts("ring submitted");
   io_uring_submit(&ring);
@@ -334,11 +434,12 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
     struct input_event *event = &(context->event);
     handle_event(&machine, event);
 
-    io_uring_cqe_seen(&ring, cqe);
     if (context) {
       queue_device_read(&ring, context);
       io_uring_submit(&ring);
     }
+
+    io_uring_cqe_seen(&ring, cqe);
   }
 
   return 0;
