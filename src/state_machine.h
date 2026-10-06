@@ -2,6 +2,7 @@
 #define STATE_MACHINE_H
 
 #include <stdint.h>
+#include <linux/input.h>
 
 typedef enum {
   FREE = 0,
@@ -28,8 +29,6 @@ typedef struct {
 #endif
 
 #ifdef STATE_MACHINE_IMPLEMENTATION
-
-#include <linux/input.h>
 
 static const int MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
                                 KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
