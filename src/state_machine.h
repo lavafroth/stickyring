@@ -49,14 +49,23 @@ int event_emit(int fd, uint16_t type, uint16_t code, int32_t value) {
   return write(fd, &event, sizeof(event));
 }
 
-void free_all_latched(int fd, modifier *keys) {
+void free_all_latched(int fd, int real_fd, modifier *keys) {
+  bool capsl = false;
   for (int j = 0; j < N_MODFIERS; ++j) {
     if (keys[j].flag == LATCHED) {
       keys[j].flag = FREE;
+      if (keys[j].flag) capsl = true;
       event_emit(fd, EV_KEY, MODIFIERS[j], 0);
     }
   }
+  event_emit(real_fd, EV_LED, LED_CAPSL, capsl);
   event_emit(fd, EV_SYN, SYN_REPORT, 0);
+}
+
+bool led_state(modifier *keys) {
+  for (int i = 0; i < N_MODFIERS; ++i)
+    if (keys[i].flag) return true;
+  return false;
 }
 
 
