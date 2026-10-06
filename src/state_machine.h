@@ -19,6 +19,7 @@ typedef struct {
   bool capsl;
   int device_fd;
   int virtual_fd;
+  bool tainted;
   struct input_event* buffer_event;
 } state_machine;
 
@@ -28,17 +29,18 @@ typedef struct {
 
 #include <linux/input.h>
 
-#define TOUCH_RELEASED = 0;
-#define TOUCH_HELD = 1;
-#define COORDINATE_EMPTY = -1;
-const int [2]POSITION_EMPTY = {-1, -1};
-
 static const int MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
                                 KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
                                 KEY_LEFTALT,   KEY_RIGHTALT};
 const int N_MODFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
 
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
+
+#define TOUCH_RELEASED = 0;
+#define TOUCH_HELD = 1;
+#define COORDINATE_EMPTY = -1;
+
+static const int POSITION_EMPTY[] = {-1, -1};
 
 void display(modifier *keys, int i) {
   modifier key = keys[i];
@@ -66,12 +68,20 @@ int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 // Useful for clearing latched states when either a non modifier key is pressed
 // or TODO: a tap, tap-drag, tap-drag-drag finishes and touchpad support is enabled.
 void state_machine__free_latched(state_machine *machine) {
-  for (int j = 0; j < N_MODFIERS; ++j)
-    if (machine->keys[j].flag == LATCHED)
-      machine->keys[j].flag = FREE;
+  for (modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
+    if (key->flag == LATCHED) {
+      key->flag = FREE;
+    }
+  }
 }
 
 void state_machine__flush(state_machine *machine) {
+  if (!(machine->tainted)) {
+    return;
+  }
+  puts("dispatching");
+  machine->tainted = false;
+
   // consume buffer event, writing it to virtual keyboard
   if (machine->buffer_event) {
     int res = write(machine->virtual_fd, machine->buffer_event, sizeof(struct input_event));
@@ -111,7 +121,11 @@ void state_machine__interact_modifier(state_machine *machine, struct input_event
     flag = NEXT_STATE[key->flag];
   }
 
-  key->flag = flag;
+  if (key->flag != flag) {
+    machine->tainted = true;
+    key->flag = flag;
+  }
+
   key->last = current_release_ms;
 }
 
@@ -121,6 +135,7 @@ void state_machine__interact(state_machine *machine, struct input_event *event) 
   if (i < 0) {
     state_machine__free_latched(machine);
     machine->buffer_event = event;
+    machine->tainted = true;
     return;
   }
   if (event->value != 0) 

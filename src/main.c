@@ -57,11 +57,18 @@ void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
 
 void handle_event(state_machine *machine, struct input_event *event) {
   if (event->type == EV_KEY) {
-    state_machine__interact(machine, event);
+    if (event->code == BTN_LEFT || event->code == BTN_RIGHT || event->code == BTN_TOUCH || event->code == BTN_TOOL_FINGER) {
+      puts("respond touch");
+    } else {
+      state_machine__interact(machine, event);
+    }
   }
-  // if (event->type == EV_ABS) {
-  // state_machine__interact(machine, event);
-  // }
+  if (event->type == EV_ABS) {
+
+    if (event->code == ABS_X || event->code == ABS_Y) {
+      puts("respond motion");
+    }
+  }
   state_machine__flush(machine);
 }
 
@@ -373,7 +380,9 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
                            .capsl = false,
                            .device_fd = keyboard.fd,
                            .virtual_fd = ui,
-                           .buffer_event = NULL};
+                           .buffer_event = NULL,
+                           .tainted = false,
+                         };
 
   puts("ring submitted");
   io_uring_submit(&ring);
