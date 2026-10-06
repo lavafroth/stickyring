@@ -319,6 +319,7 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
     return EXIT_FAILURE;
   }
 
+  // TODO: timer for touchpad tap auto unlatch
   struct itimerspec new_value;
   new_value.it_value.tv_sec = now.tv_sec + 5;
   new_value.it_value.tv_nsec = now.tv_nsec;
