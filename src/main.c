@@ -55,45 +55,14 @@ void queue_time_read(struct io_uring *ring, int fd, uint64_t *time) {
   io_uring_sqe_set_data(sqe, time);
 }
 
-uint64_t event_time_ms(const struct input_event *ev) {
-  struct timeval time = ev->time;
-  return ((uint64_t)time.tv_sec * 1000) + ((uint64_t)time.tv_usec / 1000);
-}
-
-void handle_event(int fd, int real_fd, struct input_event *event, modifier *keys) {
-  if (event->type != EV_KEY) {
-    return;
+void handle_event(state_machine* machine, struct input_event *event) {
+  if (event->type == EV_KEY) {
+    state_machine__interact(machine, event);
   }
-
-  int i = modifier_index(event->code);
-  if (i == -1) {
-    if (write(fd, event, sizeof(struct input_event)) < 0) {
-      perror("failed to passthrough event to virtual device");
-    };
-    free_all_latched(fd, real_fd, keys);
-    return;
-  }
-
-  if (event->value == 0) { // 1 = pressed
-    return;
-  };
-
-  modifier *key = keys + i;
-  uint64_t current_release_ms = event_time_ms(event);
-  uint64_t elapsed_ms = current_release_ms - key->last;
-
-  int flag = LOCKED;
-  if (elapsed_ms > 200) {
-    flag = NEXT_STATE[key->flag];
-  }
-
-  key->flag = flag;
-  key->last = current_release_ms;
-  display(keys, i);
-
-  event_emit(fd, EV_KEY, event->code, flag != FREE);
-  event_emit(real_fd, EV_LED, LED_CAPSL, led_state(keys));
-  event_emit(fd, EV_SYN, SYN_REPORT, 0);
+  // if (event->type == EV_REL) {
+    // state_machine__interact(machine, event);
+  // }
+  state_machine__flush(machine);
 }
 
 STAGE int find_keyboard_event_path__post_fopen(FILE *fp, char *out_path);
@@ -304,6 +273,8 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
                                      struct io_uring_cqe *cqe) {
   queue_device_read(&ring, &keyboard);
 
+  state_machine machine = {.keys = keys, .capsl = false, .device_fd = keyboard.fd, ui, .buffer_event = NULL };
+
   puts("ring submitted");
   io_uring_submit(&ring);
 
@@ -361,7 +332,7 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
     }
 
     struct input_event *event = &(context->event);
-    handle_event(ui, keyboard.fd, event, keys);
+    handle_event(&machine, event);
 
     io_uring_cqe_seen(&ring, cqe);
     if (context) {
