@@ -346,7 +346,7 @@ int main__post_virtual_device_create(modifier *keys, device_context keyboard,
     }
 
     if (cqe->res == sizeof(expired)) {
-      printf("timer notification: expired");
+      puts("timer notification: expired");
       io_uring_cqe_seen(&ring, cqe);
       continue;
     };
