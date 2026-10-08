@@ -39,7 +39,6 @@ typedef struct io_uring_sqe SQE;
 typedef struct io_uring_cqe CQE;
 typedef struct uinput_setup USetup;
 
-
 void queue_device_read(IoUring *ring, DeviceContext *context) {
   SQE *sqe = io_uring_get_sqe(ring);
   if (!sqe) {
@@ -51,14 +50,28 @@ void queue_device_read(IoUring *ring, DeviceContext *context) {
   io_uring_sqe_set_data(sqe, context);
 }
 
-void queue_time_read(IoUring *ring, int fd, uint64_t *time) {
-  SQE *sqe = io_uring_get_sqe(ring);
-  if (!sqe) {
-    return;
+int queue_time_read(IoUring *ring, int fd, uint64_t *expiry_couter,
+                    time_t duration_ms) {
+  struct itimerspec dst;
+  struct timespec now;
+  if (clock_gettime(clk, &now) < 0) {
+    perror("failed to get current time");
+    return EXIT_FAILURE;
   }
 
-  io_uring_prep_read(sqe, fd, time, sizeof(uint64_t), 0);
-  io_uring_sqe_set_data(sqe, time);
+  const static int ns_per_ms = 1000;
+  dst.it_value.tv_sec = now.tv_sec;
+  dst.it_value.tv_nsec = now.tv_nsec + duration_ms * ns_per_ms;
+  dst.it_interval.tv_sec = 0;
+  dst.it_interval.tv_nsec = 0;
+  if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &dst, NULL) < 0) {
+    perror("failed ot set timer request");
+    return EXIT_FAILURE;
+  }
+  SQE *sqe = io_uring_get_sqe(ring);
+  if (sqe)
+    io_uring_prep_read(sqe, fd, expiry_couter, sizeof(uint64_t), 0);
+  return EXIT_SUCCESS;
 }
 
 void handle_event(StateMachine *machine, InputEvent *event) {
@@ -211,6 +224,9 @@ STAGE int main__post_virtual_device_create(Modifier *keys,
 STAGE int main__post_touchpad_open(DeviceContext keyboard,
                                    DeviceContext touchpad, IoUring ring,
                                    CQE *cqe);
+STAGE int main__post_timer_create(Modifier *keys, DeviceContext keyboard,
+                                  int tfd, DeviceContext touchpad, IoUring ring,
+                                  CQE *cqe);
 int main() {
   int ret = 0;
 
@@ -254,8 +270,7 @@ int main__post_uring_init(IoUring ring, CQE *cqe) {
   return ret;
 }
 
-int main__post_keyboard_open(DeviceContext keyboard, IoUring ring,
-                             CQE *cqe) {
+int main__post_keyboard_open(DeviceContext keyboard, IoUring ring, CQE *cqe) {
   int ret = 0;
 
   if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) <
@@ -277,8 +292,7 @@ int main__post_keyboard_open(DeviceContext keyboard, IoUring ring,
   return ret;
 }
 
-int main__post_keyboard_grab(DeviceContext keyboard, IoUring ring,
-                             CQE *cqe) {
+int main__post_keyboard_grab(DeviceContext keyboard, IoUring ring, CQE *cqe) {
   int ret = 0;
 
   char device_path[PATH_MAX];
@@ -374,6 +388,25 @@ int main__post_uinput_open(DeviceContext keyboard, DeviceContext touchpad,
 int main__post_virtual_device_create(Modifier *keys, DeviceContext keyboard,
                                      DeviceContext touchpad, IoUring ring,
                                      CQE *cqe) {
+
+  int tfd = timerfd_create(clk, 0);
+  if (tfd < 0) {
+    perror("failed to create timerfd");
+    return EXIT_FAILURE;
+  }
+
+  int ret = main__post_timer_create(keys, keyboard, tfd, touchpad, ring, cqe);
+
+  close(tfd);
+  return ret;
+}
+
+int create_timer_spec(struct itimerspec *dst, time_t duration_ms) {
+  return EXIT_SUCCESS;
+}
+
+int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
+                            DeviceContext touchpad, IoUring ring, CQE *cqe) {
   queue_device_read(&ring, &keyboard);
   queue_device_read(&ring, &touchpad);
 
@@ -389,46 +422,24 @@ int main__post_virtual_device_create(Modifier *keys, DeviceContext keyboard,
   puts("ring submitted");
   io_uring_submit(&ring);
 
-  int tfd = timerfd_create(clk, 0);
-  if (tfd == -1) {
-    perror("failed to create timerfd");
-    return EXIT_FAILURE;
-  }
-
-  struct timespec now;
-  if (clock_gettime(clk, &now) < 0) {
-    perror("failed to get current time");
-    close(tfd);
-    return EXIT_FAILURE;
-  }
-
   // TODO: timer for touchpad tap auto unlatch
-  struct itimerspec new_value;
-  new_value.it_value.tv_sec = now.tv_sec + 5;
-  new_value.it_value.tv_nsec = now.tv_nsec;
-  new_value.it_interval.tv_sec = 0;
-  new_value.it_interval.tv_nsec = 0;
-
-  if (timerfd_settime(tfd, TFD_TIMER_ABSTIME, &new_value, NULL) < 0) {
-    perror("failed ot set timer request");
-    close(tfd);
-    return EXIT_FAILURE;
-  }
-
-  uint64_t expired;
-  queue_time_read(&ring, tfd, &expired);
+  uint64_t expiry_indicator;
+  queue_time_read(&ring, tfd, &expiry_indicator, 500);
 
   while (true) {
-    int got_cqe = io_uring_wait_cqe(&ring, &cqe);
-    if (got_cqe < 0) {
-      if (got_cqe == -EWOULDBLOCK || got_cqe == -EAGAIN || got_cqe == -EINTR) {
-        continue;
-      }
-      printf("kernel returned error on waiting for event: %d", got_cqe);
-      break;
+    int result = io_uring_wait_cqe(&ring, &cqe);
+
+    // admissible errors
+    if (result == -EWOULDBLOCK || result == -EAGAIN || result == -EINTR) {
+      continue;
     }
 
-    if (cqe->res == sizeof(expired)) {
+    if (result < 0) {
+      printf("kernel returned error on waiting for event: %d", result);
+      return result;
+    }
+
+    if (cqe->res == sizeof(expiry_indicator)) {
       puts("timer notification: expired");
       io_uring_cqe_seen(&ring, cqe);
       continue;
@@ -453,5 +464,5 @@ int main__post_virtual_device_create(Modifier *keys, DeviceContext keyboard,
     io_uring_cqe_seen(&ring, cqe);
   }
 
-  return 0;
+  return EXIT_SUCCESS;
 }
