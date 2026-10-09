@@ -139,7 +139,11 @@ void state_machine__interact(StateMachine *machine, InputEvent *event) {
     machine->tainted = true;
     return;
   }
-  if (event->value != 0) 
+
+  // 0 release
+  // 1 press
+  // 2 hardware spam
+  if (event->value == 1)
     state_machine__interact_modifier(machine, event, i);
 }
 
