@@ -1,8 +1,8 @@
 #ifndef STATE_MACHINE_H
 #define STATE_MACHINE_H
 
-#include <stdint.h>
 #include <linux/input.h>
+#include <stdint.h>
 
 typedef enum {
   FREE = 0,
@@ -18,12 +18,32 @@ typedef struct {
 typedef struct input_event InputEvent;
 
 typedef struct {
+  int x;
+  int y;
+} Position;
+
+typedef enum {
+  INITIATED,
+  NOTED_BEGIN_X,
+  NOTED_BEGIN_XY,
+} TouchStage;
+
+typedef struct {
+  TouchStage stage;
+  Position began;
+  Position ended;
+  uint64_t last_ms;
+} Touch;
+
+typedef struct {
   Modifier *keys;
   bool capsl;
   int device_fd;
   int virtual_fd;
   bool tainted;
-  InputEvent* buffer_event;
+  InputEvent *buffer_event;
+  Touch touch;
+
 } StateMachine;
 
 #endif
@@ -40,8 +60,6 @@ const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
 #define TOUCH_RELEASED = 0;
 #define TOUCH_HELD = 1;
 #define COORDINATE_EMPTY = -1;
-
-static const int POSITION_EMPTY[] = {-1, -1};
 
 void display(Modifier *keys, int i) {
   Modifier key = keys[i];
@@ -67,7 +85,8 @@ int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 
 // Free all latched keys on the virtual device.
 // Useful for clearing latched states when either a non modifier key is pressed
-// or TODO: a tap, tap-drag, tap-drag-drag finishes and touchpad support is enabled.
+// or TODO: a tap, tap-drag, tap-drag-drag finishes and touchpad support is
+// enabled.
 void state_machine__free_latched(StateMachine *machine) {
   for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
     if (key->flag == LATCHED) {
@@ -80,12 +99,13 @@ void state_machine__flush(StateMachine *machine) {
   if (!(machine->tainted)) {
     return;
   }
-  puts("dispatching");
+  // puts("dispatching");
   machine->tainted = false;
 
   // consume buffer event, writing it to virtual keyboard
   if (machine->buffer_event) {
-    int res = write(machine->virtual_fd, machine->buffer_event, sizeof(struct input_event));
+    int res = write(machine->virtual_fd, machine->buffer_event,
+                    sizeof(struct input_event));
     if (res < 0) {
       perror("failed to passthrough event to virtual device");
     };
@@ -112,13 +132,16 @@ uint64_t event_time_ms(const struct input_event *ev) {
   return ((uint64_t)time.tv_sec * 1000) + ((uint64_t)time.tv_usec / 1000);
 }
 
-void state_machine__interact_modifier(StateMachine *machine, InputEvent *event, int i) {
+void state_machine__interact_modifier(StateMachine *machine, InputEvent *event,
+                                      int i) {
   Modifier *key = machine->keys + i;
   uint64_t current_release_ms = event_time_ms(event);
   uint64_t elapsed_ms = current_release_ms - key->last;
 
   int flag = LOCKED;
-  if (elapsed_ms > 200) {
+
+  static const int threshold = 200;
+  if (elapsed_ms > threshold) {
     flag = NEXT_STATE[key->flag];
   }
 

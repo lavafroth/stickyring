@@ -75,19 +75,53 @@ int queue_time_read(IoUring *ring, int fd, uint64_t *expiry_couter,
 }
 
 void handle_event(StateMachine *machine, InputEvent *event) {
-  if (event->type == EV_KEY) {
-    if (event->code == BTN_LEFT || event->code == BTN_RIGHT ||
-        event->code == BTN_TOUCH || event->code == BTN_TOOL_FINGER) {
-      puts("respond touch");
-    } else {
-      state_machine__interact(machine, event);
-    }
-  }
-  if (event->type == EV_ABS) {
+  int code = event->code;
+  int value = event->value;
+  int type = event->type;
+  if (type == EV_KEY) {
+    if (code == BTN_TOUCH) {
+      if (value) {
+        machine->touch.stage = INITIATED;
 
-    if (event->code == ABS_X || event->code == ABS_Y) {
-      puts("respond motion");
+        int threshold = 500;
+        if (event_time_ms(event) < machine->touch.last_ms + threshold) puts("touch initiated by cancelling timer");
+        else puts("touch initiated");
+      }
+      else {
+        machine->touch.last_ms = event_time_ms(event);
+
+        int64_t dx = (int64_t) (machine->touch.ended.x - machine->touch.began.x);
+        int64_t dy = (int64_t) (machine->touch.ended.y - machine->touch.began.y);
+        long threshold = 300;
+        bool within_threshold_circle = dx * dx + dy * dy < threshold * threshold;
+        printf("dx = %ld dy = %ld\n", dx, dy);
+        if (within_threshold_circle) printf("touch lifted, 0x%03x will persist latch\n", event->code);
+        else printf("touch lifted 0x%03x, will unlatch in 500ms\n", event->code);
+      }
     }
+    state_machine__interact(machine, event);
+  }
+
+  if (type == EV_ABS) {
+
+    bool x_axis = code == ABS_X;
+    bool y_axis = code == ABS_Y;
+
+    // the kernel sends x and y values in separate events:
+    // x first, y second
+    if (x_axis && machine->touch.stage == INITIATED) {
+      machine->touch.began.x = value;
+      machine->touch.stage = NOTED_BEGIN_X;
+    }
+
+    if (y_axis && machine->touch.stage == NOTED_BEGIN_X) {
+      machine->touch.began.y = value;
+      machine->touch.stage = NOTED_BEGIN_XY;
+    }
+
+    if (x_axis) machine->touch.ended.x = value;
+    if (y_axis) machine->touch.ended.y = value;
+
   }
   state_machine__flush(machine);
 }
@@ -415,7 +449,9 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
       .capsl = false,
       .device_fd = keyboard.fd,
       .virtual_fd = ui,
+
       .buffer_event = NULL,
+
       .tainted = false,
   };
 
