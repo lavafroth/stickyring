@@ -39,6 +39,8 @@ typedef struct io_uring_sqe SQE;
 typedef struct io_uring_cqe CQE;
 typedef struct uinput_setup USetup;
 
+#define TIMER_THRESHOLD_MS 500
+
 void queue_device_read(IoUring *ring, DeviceContext *context) {
   SQE *sqe = io_uring_get_sqe(ring);
   if (!sqe) {
@@ -59,45 +61,73 @@ int queue_time_read(IoUring *ring, int fd, uint64_t *expiry_couter,
     return EXIT_FAILURE;
   }
 
-  const static int ns_per_ms = 1000;
-  dst.it_value.tv_sec = now.tv_sec;
-  dst.it_value.tv_nsec = now.tv_nsec + duration_ms * ns_per_ms;
+  const static time_t ns_per_ms = 1000000L;
+  const static time_t ns_per_s = 1000000000L;
+
+  time_t whole_seconds = duration_ms / 1000L;
+  time_t extra_ms = duration_ms % 1000L;
+
+  dst.it_value.tv_sec = now.tv_sec + whole_seconds;
+  dst.it_value.tv_nsec = now.tv_nsec + (extra_ms * ns_per_ms);
+
+  if (dst.it_value.tv_nsec >= ns_per_s) {
+    dst.it_value.tv_sec += 1;
+    dst.it_value.tv_nsec -= ns_per_s;
+  }
+
   dst.it_interval.tv_sec = 0;
   dst.it_interval.tv_nsec = 0;
   if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &dst, NULL) < 0) {
     perror("failed ot set timer request");
     return EXIT_FAILURE;
   }
+
   SQE *sqe = io_uring_get_sqe(ring);
   if (sqe)
     io_uring_prep_read(sqe, fd, expiry_couter, sizeof(uint64_t), 0);
   return EXIT_SUCCESS;
 }
 
-void handle_event(StateMachine *machine, InputEvent *event) {
+typedef enum {
+  TIMER_CANCEL,
+  TIMER_TRIGGER,
+  TIMER_CONTINUE,
+} TimerAction;
+
+TimerAction handle_event(StateMachine *machine, InputEvent *event) {
   int code = event->code;
   int value = event->value;
   int type = event->type;
+
   if (type == EV_KEY) {
+
+    if (code == BTN_LEFT || code == BTN_RIGHT || code == BTN_TOOL_FINGER)
+      return TIMER_CONTINUE;
     if (code == BTN_TOUCH) {
       if (value) {
         machine->touch.stage = INITIATED;
 
-        int threshold = 500;
-        if (event_time_ms(event) < machine->touch.last_ms + threshold) puts("touch initiated by cancelling timer");
-        else puts("touch initiated");
-      }
-      else {
+        // puts("touch initiated");
+        if (event_time_ms(event) <
+            machine->touch.last_ms + TIMER_THRESHOLD_MS) return TIMER_CANCEL;
+      } else {
         machine->touch.last_ms = event_time_ms(event);
 
-        int64_t dx = (int64_t) (machine->touch.ended.x - machine->touch.began.x);
-        int64_t dy = (int64_t) (machine->touch.ended.y - machine->touch.began.y);
+        int64_t dx = (int64_t)(machine->touch.ended.x - machine->touch.began.x);
+        int64_t dy = (int64_t)(machine->touch.ended.y - machine->touch.began.y);
         long threshold = 300;
-        bool within_threshold_circle = dx * dx + dy * dy < threshold * threshold;
-        printf("dx = %ld dy = %ld\n", dx, dy);
-        if (within_threshold_circle) printf("touch lifted, 0x%03x will persist latch\n", event->code);
-        else printf("touch lifted 0x%03x, will unlatch in 500ms\n", event->code);
+        bool within_threshold_circle =
+            dx * dx + dy * dy < threshold * threshold;
+        if (within_threshold_circle) {
+          return TIMER_TRIGGER;
+        } else {
+          state_machine__free_latched(machine);
+          machine->tainted = true;
+          state_machine__flush(machine);
+          // puts("drag lifted, keys unlatched");
+        }
       }
+      return TIMER_CONTINUE;
     }
     state_machine__interact(machine, event);
   }
@@ -119,11 +149,13 @@ void handle_event(StateMachine *machine, InputEvent *event) {
       machine->touch.stage = NOTED_BEGIN_XY;
     }
 
-    if (x_axis) machine->touch.ended.x = value;
-    if (y_axis) machine->touch.ended.y = value;
-
+    if (x_axis)
+      machine->touch.ended.x = value;
+    if (y_axis)
+      machine->touch.ended.y = value;
   }
   state_machine__flush(machine);
+  return TIMER_CONTINUE;
 }
 
 STAGE int find_keyboard_event_path__post_fopen(FILE *fp, char *out_path);
@@ -335,7 +367,7 @@ int main__post_keyboard_grab(DeviceContext keyboard, IoUring ring, CQE *cqe) {
     return 1;
   }
 
-  printf("%s\n", device_path);
+  // printf("touchpad %s\n", device_path);
   DeviceContext touchpad = {.path = device_path,
                             .fd = open(device_path, O_RDONLY)};
   if (touchpad.fd < 0) {
@@ -460,7 +492,7 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
 
   // TODO: timer for touchpad tap auto unlatch
   uint64_t expiry_indicator;
-  queue_time_read(&ring, tfd, &expiry_indicator, 500);
+  bool listening_for_timer = false;
 
   while (true) {
     int result = io_uring_wait_cqe(&ring, &cqe);
@@ -476,7 +508,12 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
     }
 
     if (cqe->res == sizeof(expiry_indicator)) {
-      puts("timer notification: expired");
+      if (listening_for_timer) {
+        // puts("expired");
+        state_machine__free_latched(&machine);
+        machine.tainted = true;
+        state_machine__flush(&machine);
+      }
       io_uring_cqe_seen(&ring, cqe);
       continue;
     };
@@ -486,12 +523,20 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
     if (cqe->res != sizeof(InputEvent)) {
       fprintf(stderr, "incomplete input event data found for %s: skipping\n",
               context->path);
+      io_uring_cqe_seen(&ring, cqe);
       continue;
     }
 
     InputEvent *event = &(context->event);
-    handle_event(&machine, event);
+    TimerAction res = handle_event(&machine, event);
 
+    if (res == TIMER_CANCEL) listening_for_timer = false;
+    if (res == TIMER_TRIGGER) listening_for_timer = true;
+
+    if (res == TIMER_TRIGGER) {
+      queue_time_read(&ring, tfd, &expiry_indicator, TIMER_THRESHOLD_MS);
+      io_uring_submit(&ring);
+    }
     if (context) {
       queue_device_read(&ring, context);
       io_uring_submit(&ring);
