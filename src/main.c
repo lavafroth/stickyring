@@ -108,8 +108,8 @@ TimerAction handle_event(StateMachine *machine, InputEvent *event) {
         machine->touch.stage = INITIATED;
 
         // puts("touch initiated");
-        if (event_time_ms(event) <
-            machine->touch.last_ms + TIMER_THRESHOLD_MS) return TIMER_CANCEL;
+        if (event_time_ms(event) < machine->touch.last_ms + TIMER_THRESHOLD_MS)
+          return TIMER_CANCEL;
       } else {
         machine->touch.last_ms = event_time_ms(event);
 
@@ -119,7 +119,7 @@ TimerAction handle_event(StateMachine *machine, InputEvent *event) {
         bool within_threshold_circle =
             dx * dx + dy * dy < threshold * threshold;
         if (within_threshold_circle) {
-          return TIMER_TRIGGER;
+          if (state_machine__any_latched(machine)) return TIMER_TRIGGER;
         } else {
           state_machine__free_latched(machine);
           machine->tainted = true;
@@ -293,6 +293,10 @@ STAGE int main__post_touchpad_open(DeviceContext keyboard,
 STAGE int main__post_timer_create(Modifier *keys, DeviceContext keyboard,
                                   int tfd, DeviceContext touchpad, IoUring ring,
                                   CQE *cqe);
+STAGE void main__post_cqe_read(IoUring *ring, CQE *cqe,
+                               bool *listening_for_timer, StateMachine *machine,
+                               uint64_t *expiry_indicator, int tfd);
+
 int main() {
   int ret = 0;
 
@@ -467,8 +471,44 @@ int main__post_virtual_device_create(Modifier *keys, DeviceContext keyboard,
   return ret;
 }
 
-int create_timer_spec(struct itimerspec *dst, time_t duration_ms) {
-  return EXIT_SUCCESS;
+void main__post_cqe_read(IoUring *ring, CQE *cqe, bool *listening_for_timer,
+                         StateMachine *machine, uint64_t *expiry_indicator,
+                         int tfd) {
+  if (cqe->res == sizeof(uint64_t) && !*listening_for_timer) {
+    return;
+  }
+
+  if (cqe->res == sizeof(uint64_t)) {
+    state_machine__free_latched(machine);
+    machine->tainted = true;
+    state_machine__flush(machine);
+    return;
+  }
+
+  DeviceContext *context = io_uring_cqe_get_data(cqe);
+
+  if (cqe->res != sizeof(InputEvent)) {
+    fprintf(stderr, "incomplete input event data found for %s: skipping\n",
+            context->path);
+    return;
+  }
+
+  InputEvent *event = &(context->event);
+  TimerAction res = handle_event(machine, event);
+
+  if (res == TIMER_CANCEL)
+    *listening_for_timer = false;
+  if (res == TIMER_TRIGGER)
+    *listening_for_timer = true;
+
+  if (res == TIMER_TRIGGER) {
+    queue_time_read(ring, tfd, expiry_indicator, TIMER_THRESHOLD_MS);
+    io_uring_submit(ring);
+  }
+  if (context) {
+    queue_device_read(ring, context);
+    io_uring_submit(ring);
+  }
 }
 
 int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
@@ -490,7 +530,6 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
   puts("ring submitted");
   io_uring_submit(&ring);
 
-  // TODO: timer for touchpad tap auto unlatch
   uint64_t expiry_indicator;
   bool listening_for_timer = false;
 
@@ -507,41 +546,8 @@ int main__post_timer_create(Modifier *keys, DeviceContext keyboard, int tfd,
       return result;
     }
 
-    if (cqe->res == sizeof(expiry_indicator)) {
-      if (listening_for_timer) {
-        // puts("expired");
-        state_machine__free_latched(&machine);
-        machine.tainted = true;
-        state_machine__flush(&machine);
-      }
-      io_uring_cqe_seen(&ring, cqe);
-      continue;
-    };
-
-    DeviceContext *context = io_uring_cqe_get_data(cqe);
-
-    if (cqe->res != sizeof(InputEvent)) {
-      fprintf(stderr, "incomplete input event data found for %s: skipping\n",
-              context->path);
-      io_uring_cqe_seen(&ring, cqe);
-      continue;
-    }
-
-    InputEvent *event = &(context->event);
-    TimerAction res = handle_event(&machine, event);
-
-    if (res == TIMER_CANCEL) listening_for_timer = false;
-    if (res == TIMER_TRIGGER) listening_for_timer = true;
-
-    if (res == TIMER_TRIGGER) {
-      queue_time_read(&ring, tfd, &expiry_indicator, TIMER_THRESHOLD_MS);
-      io_uring_submit(&ring);
-    }
-    if (context) {
-      queue_device_read(&ring, context);
-      io_uring_submit(&ring);
-    }
-
+    main__post_cqe_read(&ring, cqe, &listening_for_timer, &machine,
+                        &expiry_indicator, tfd);
     io_uring_cqe_seen(&ring, cqe);
   }
 

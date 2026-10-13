@@ -95,6 +95,13 @@ void state_machine__free_latched(StateMachine *machine) {
   }
 }
 
+bool state_machine__any_latched(StateMachine *machine) {
+  for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
+    if (key->flag == LATCHED) return true;
+  }
+  return false;
+}
+
 void state_machine__flush(StateMachine *machine) {
   if (!(machine->tainted)) {
     return;
