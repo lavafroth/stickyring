@@ -1,7 +1,16 @@
 # `stickyring`
 
-A minimal but incomplete port of my sticky keys tool powered by `io_uring`.
+An almost complete port of my sticky keys tool powered by `io_uring`.
 
+### What's Missing
+
+- [ ] Configuration options: Currently all the threshold and grace values are hardcoded.
+- [ ] Refactoring touchpad business logic: Not user facing.
+
+### Extra Features Roadmap
+
+- [ ] Configurable touchpad safe zones: Top left and top right triangles.
+- [ ] Touchpad tap grace area onboarding: Ask the user to tilt their finger at a single point on the touchpad to measure how much motion is still be perceived as a _tap_.
 
 ## Getting Started
 
