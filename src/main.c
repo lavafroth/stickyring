@@ -22,7 +22,6 @@
 #define PROC_INPUT_DEVICES "/proc/bus/input/devices"
 
 unsigned int clk = CLOCK_MONOTONIC;
-const int UNINITIALIZED_FD = -1;
 
 typedef struct {
   int fd;
@@ -34,8 +33,6 @@ typedef struct io_uring IoUring;
 typedef struct io_uring_sqe SQE;
 typedef struct io_uring_cqe CQE;
 typedef struct uinput_setup USetup;
-
-#define TIMER_THRESHOLD_MS 500
 
 void queue_device_read(IoUring *ring, DeviceContext *context) {
   SQE *sqe = io_uring_get_sqe(ring);
@@ -90,6 +87,108 @@ typedef enum {
   TIMER_CONTINUE,
 } TimerAction;
 
+typedef struct {
+  uint64_t timeout;
+  uint8_t modifiers;
+  bool touchpad;
+  uint64_t touchpad_timeout;
+  int64_t touchpad_grace_radius;
+} Config;
+
+int yesnt(const char *line, const char *pattern, unsigned int len) {
+  if (strncmp(line, pattern, len) != 0) {
+    return 0;
+  }
+  if (strncmp(line + len, "yes", 3) == 0 ||
+      strncmp(line + len, "true", 4) == 0) {
+    return 1;
+  }
+  if (strncmp(line + len, "no", 2) == 0 ||
+      strncmp(line + len, "false", 5) == 0) {
+    return 0;
+  }
+  return -1;
+}
+
+Config config;
+int read_config(const char *path) {
+  FILE *fp = fopen(path, "r");
+  if (!fp) {
+    fprintf(stderr, "failed to open config file %s", path);
+    return EXIT_FAILURE;
+  }
+
+  char line[256];
+
+  bool in_touchpad_section = false;
+  uint64_t timeout = 300;
+  uint8_t modifiers = 0b00000000;
+  bool touchpad = false;
+  uint64_t touchpad_timeout = 500;
+  int64_t touchpad_grace_radius = 300;
+
+  while (true) {
+    bool empty_line = fgets(line, sizeof(line), fp) == NULL;
+    if (empty_line) {
+      break;
+    }
+
+    if (line[0] == ';')
+      continue;
+
+    if (strncmp(line, "[touchpad]", 10) == 0) {
+      touchpad = true;
+      in_touchpad_section = true;
+      continue;
+    }
+
+    if (in_touchpad_section && strncmp(line, "timeout=", 8) == 0) {
+      sscanf(line + 8, "%" SCNu64, &touchpad_timeout);
+      continue;
+    }
+    if (in_touchpad_section && strncmp(line, "grace=", 6) == 0) {
+      sscanf(line + 8, "%" SCNu64, &touchpad_grace_radius);
+      continue;
+    }
+
+    if (in_touchpad_section && line[0] == '\n') {
+      in_touchpad_section = false;
+      continue;
+    }
+
+    if (strncmp(line, "timeout=", 8) == 0) {
+      sscanf(line + 8, "%" SCNu64, &timeout);
+      continue;
+    }
+
+    char *modifier_names[] = {
+        "leftshift=", "rightshift=", "leftctrl=", "rightctrl=",
+        "leftmeta=",  "rightmeta=",  "leftalt=",  "rightalt="};
+    int lens[] = {10, 11, 9, 10, 9, 10, 8, 9};
+    for (int i = 0; i < 8; i++) {
+      int mod = yesnt(line, modifier_names[i], lens[i]);
+      if (mod < 0)
+        fprintf(stderr, "failed to parse config line %s", line);
+      if (mod) {
+        modifiers |= (1 << i);
+        break;
+      }
+    }
+  }
+
+  config.timeout = timeout;
+  config.modifiers = modifiers;
+  config.touchpad = touchpad;
+  config.touchpad_timeout = touchpad_timeout;
+  config.touchpad_grace_radius = touchpad_grace_radius;
+
+  printf("%lu\n", config.timeout);
+  printf("%d\n", config.modifiers);
+
+defer_close_file:
+  fclose(fp);
+  return EXIT_SUCCESS;
+}
 TimerAction handle_event(StateMachine *machine, InputEvent *event) {
   int code = event->code;
   int value = event->value;
@@ -104,14 +203,15 @@ TimerAction handle_event(StateMachine *machine, InputEvent *event) {
         machine->touch.stage = INITIATED;
 
         // puts("touch initiated");
-        if (event_time_ms(event) < machine->touch.last_ms + TIMER_THRESHOLD_MS)
+        if (event_time_ms(event) <
+            machine->touch.last_ms + config.touchpad_timeout)
           return TIMER_CANCEL;
       } else {
         machine->touch.last_ms = event_time_ms(event);
 
         int64_t dx = (int64_t)(machine->touch.ended.x - machine->touch.began.x);
         int64_t dy = (int64_t)(machine->touch.ended.y - machine->touch.began.y);
-        long threshold = 300;
+        long threshold = config.touchpad_grace_radius;
         bool within_threshold_circle =
             dx * dx + dy * dy < threshold * threshold;
         if (within_threshold_circle) {
@@ -213,16 +313,18 @@ int find_device_path(char *out_path, bool want_touchpad) {
     }
   }
 
-
-  defer_close_file:
-    fclose(fp);
+defer_close_file:
+  fclose(fp);
   return EXIT_SUCCESS;
 }
 
-int main() {
+int main(int argc, const char **argv) {
 
   IoUring ring;
   CQE *cqe;
+
+  if (argc > 1)
+    read_config(argv[1]);
 
   Modifier keys[N_MODFIERS];
   memset(keys, 0, sizeof(keys));
@@ -338,7 +440,7 @@ int main() {
       .capsl = false,
       .device_fd = keyboard.fd,
       .virtual_fd = ui,
-
+      .mask = config.modifiers,
       .buffer_event = NULL,
 
       .tainted = false,
@@ -391,7 +493,7 @@ int main() {
       listening_for_timer = true;
 
     if (res == TIMER_TRIGGER) {
-      queue_time_read(&ring, tfd, &expiry_indicator, TIMER_THRESHOLD_MS);
+      queue_time_read(&ring, tfd, &expiry_indicator, config.touchpad_timeout);
       io_uring_submit(&ring);
     }
     if (context) {

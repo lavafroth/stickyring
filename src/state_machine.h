@@ -43,6 +43,7 @@ typedef struct {
   bool tainted;
   InputEvent *buffer_event;
   Touch touch;
+  uint8_t mask;
 
 } StateMachine;
 
@@ -85,7 +86,7 @@ int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 
 // Free all latched keys on the virtual device.
 // Useful for clearing latched states when either a non modifier key is pressed
-// or TODO: a tap, tap-drag, tap-drag-drag finishes and touchpad support is
+// or a tap, tap-drag, tap-drag-drag finishes and touchpad support is
 // enabled.
 void state_machine__free_latched(StateMachine *machine) {
   for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
@@ -162,7 +163,18 @@ void state_machine__interact_modifier(StateMachine *machine, InputEvent *event,
 
 void state_machine__interact(StateMachine *machine, InputEvent *event) {
   int i = modifier_index(event->code);
-  // if (i == 5) exit(1);
+
+  if (i >= 0) {
+    bool masked = !(machine->mask & (1 << i));
+    // printf("%d masked: %d\n", i, masked);
+    if (masked) {
+      // int _unhandled = write(machine->device_fd, event, sizeof(InputEvent));
+      emit_event(machine->virtual_fd, EV_KEY, event->code, event->value);
+      emit_event(machine->virtual_fd, EV_SYN, SYN_REPORT, 0);
+      return;
+    }
+  }
+
   if (i < 0) {
     state_machine__free_latched(machine);
     machine->buffer_event = event;

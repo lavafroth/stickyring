@@ -4,7 +4,7 @@ An almost complete port of my sticky keys tool powered by `io_uring`.
 
 ### What's Missing
 
-- [ ] Configuration options: Currently all the threshold and grace values are hardcoded.
+- [x] Configuration options: See `config.ini` for a comprehensive list of all options.
 - [ ] Refactoring touchpad business logic: Not user facing.
 
 ### Extra Features Roadmap
@@ -20,7 +20,7 @@ An almost complete port of my sticky keys tool powered by `io_uring`.
 
 ```sh
 nix build
-sudo ./result/bin/stickyring
+sudo ./result/bin/stickyring config.ini
 ```
 
 #### Without Nix
@@ -32,7 +32,7 @@ Prerequisites:
 
 ```sh
 just build
-sudo ./build/stickyring
+sudo ./build/stickyring config.ini
 ```
 
 ### Systemd Service
@@ -41,7 +41,7 @@ Available as part of the repository's nix flake.
 
 ### Bonus
 
-Compiled binary is around 18kB.
+Compiled binary is around 20kB.
 
 ## Contributing
 
