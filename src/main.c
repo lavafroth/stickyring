@@ -189,68 +189,81 @@ defer_close_file:
   fclose(fp);
   return EXIT_SUCCESS;
 }
+
+int64_t tap_euclidean_distance_square(StateMachine *machine) {
+  int64_t dx = (int64_t)(machine->touch.ended.x - machine->touch.began.x);
+  int64_t dy = (int64_t)(machine->touch.ended.y - machine->touch.began.y);
+  return dx * dx + dy * dy;
+}
+
 TimerAction handle_event(StateMachine *machine, InputEvent *event) {
-  int code = event->code;
+  uint16_t code = event->code;
   int value = event->value;
-  int type = event->type;
+  uint16_t type = event->type;
 
-  if (type == EV_KEY) {
+  bool is_key = type == EV_KEY;
+  bool click_not_touch = is_key && (code == BTN_LEFT ||       //
+                                    code == BTN_RIGHT ||      //
+                                    code == BTN_TOOL_FINGER); //
+  bool click_is_touch = is_key && code == BTN_TOUCH;
+  bool key_not_click = is_key && !(click_is_touch || click_not_touch);
+  bool touch_pressed = click_is_touch && value;
+  bool second_tap_in_time =
+      touch_pressed &&
+      event_time_ms(event) < machine->touch.last_ms + config.touchpad_timeout;
+  bool touch_released = click_is_touch && !value;
+  bool is_coordinate = type == EV_ABS;
+  bool x_axis = is_coordinate && code == ABS_X;
+  bool y_axis = is_coordinate && code == ABS_Y;
+  long threshold = config.touchpad_grace_radius;
+  bool released_within_threshold_circle =
+      touch_released &&
+      tap_euclidean_distance_square(machine) < threshold * threshold;
+  bool released_beyond_threshold_circle =
+      touch_released && !released_within_threshold_circle;
 
-    if (code == BTN_LEFT || code == BTN_RIGHT || code == BTN_TOOL_FINGER)
-      return TIMER_CONTINUE;
-    if (code == BTN_TOUCH) {
-      if (value) {
-        machine->touch.stage = INITIATED;
+  if (click_not_touch)
+    return TIMER_CONTINUE;
 
-        // puts("touch initiated");
-        if (event_time_ms(event) <
-            machine->touch.last_ms + config.touchpad_timeout)
-          return TIMER_CANCEL;
-      } else {
-        machine->touch.last_ms = event_time_ms(event);
+  if (touch_pressed)
+    machine->touch.stage = INITIATED;
 
-        int64_t dx = (int64_t)(machine->touch.ended.x - machine->touch.began.x);
-        int64_t dy = (int64_t)(machine->touch.ended.y - machine->touch.began.y);
-        long threshold = config.touchpad_grace_radius;
-        bool within_threshold_circle =
-            dx * dx + dy * dy < threshold * threshold;
-        if (within_threshold_circle) {
-          if (state_machine__any_latched(machine))
-            return TIMER_TRIGGER;
-        } else {
-          state_machine__free_latched(machine);
-          machine->tainted = true;
-          state_machine__flush(machine);
-          // puts("drag lifted, keys unlatched");
-        }
-      }
-      return TIMER_CONTINUE;
-    }
+  if (second_tap_in_time)
+    return TIMER_CANCEL;
+
+  if (touch_released)
+    machine->touch.last_ms = event_time_ms(event);
+
+  if (released_within_threshold_circle && state_machine__any_latched(machine))
+    return TIMER_TRIGGER;
+
+  if (released_beyond_threshold_circle) {
+    state_machine__free_latched(machine);
+    machine->tainted = true;
+    state_machine__flush(machine);
+    // puts("drag lifted, keys unlatched");
+  }
+
+  if (key_not_click)
     state_machine__interact(machine, event);
+
+  // the kernel sends x and y values in separate events:
+  // first note x value, then y
+  if (x_axis && machine->touch.stage == INITIATED) {
+    machine->touch.began.x = value;
+    machine->touch.stage = NOTED_BEGIN_X;
   }
 
-  if (type == EV_ABS) {
-
-    bool x_axis = code == ABS_X;
-    bool y_axis = code == ABS_Y;
-
-    // the kernel sends x and y values in separate events:
-    // x first, y second
-    if (x_axis && machine->touch.stage == INITIATED) {
-      machine->touch.began.x = value;
-      machine->touch.stage = NOTED_BEGIN_X;
-    }
-
-    if (y_axis && machine->touch.stage == NOTED_BEGIN_X) {
-      machine->touch.began.y = value;
-      machine->touch.stage = NOTED_BEGIN_XY;
-    }
-
-    if (x_axis)
-      machine->touch.ended.x = value;
-    if (y_axis)
-      machine->touch.ended.y = value;
+  if (y_axis && machine->touch.stage == NOTED_BEGIN_X) {
+    machine->touch.began.y = value;
+    machine->touch.stage = NOTED_BEGIN_XY;
   }
+
+  if (x_axis)
+    machine->touch.ended.x = value;
+  if (y_axis)
+    machine->touch.ended.y = value;
+
   state_machine__flush(machine);
   return TIMER_CONTINUE;
 }
