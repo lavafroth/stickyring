@@ -372,25 +372,30 @@ int main(int argc, const char **argv) {
     goto deferred_close_keyboard;
   }
 
-  char touchpad_path[PATH_MAX];
-  if (find_device_path(touchpad_path, true) < 0) {
-    fprintf(stderr, "unable to find a path to the touchpad device\n");
-    goto deferred_ungrab_keyboard;
-  }
+  DeviceContext touchpad = {.path = NULL, .fd = NULL};
 
-  DeviceContext touchpad = {.path = touchpad_path,
-                            .fd = open(touchpad_path, O_RDONLY)};
-  if (touchpad.fd < 0) {
-    fprintf(
-        stderr,
-        "failed to open handle to touchpad input device %s: currently skipped: "
-        "ensure you are root\n",
-        touchpad.path);
-    goto deferred_ungrab_keyboard;
-  }
-  if (ioctl(touchpad.fd, EVIOCSCLOCKID, &clk) < 0) {
-    perror("failed to set monotonic clock");
-    goto deferred_touchpad_close;
+  if (config.touchpad) {
+    char touchpad_path[PATH_MAX];
+    if (find_device_path(touchpad_path, true) < 0) {
+      fprintf(stderr, "unable to find a path to the touchpad device\n");
+      goto deferred_ungrab_keyboard;
+    }
+
+    touchpad.path = touchpad_path;
+    touchpad.fd = open(touchpad_path, O_RDONLY);
+
+    if (touchpad.fd < 0) {
+      fprintf(stderr,
+              "failed to open handle to touchpad input device %s: currently "
+              "skipped: "
+              "ensure you are root\n",
+              touchpad.path);
+      goto deferred_ungrab_keyboard;
+    }
+    if (ioctl(touchpad.fd, EVIOCSCLOCKID, &clk) < 0) {
+      perror("failed to set monotonic clock");
+      goto deferred_touchpad_close;
+    }
   }
 
   int ui = open("/dev/uinput", O_NONBLOCK | O_WRONLY);
@@ -446,7 +451,9 @@ int main(int argc, const char **argv) {
   }
 
   queue_device_read(&ring, &keyboard);
-  queue_device_read(&ring, &touchpad);
+
+  if (config.touchpad)
+    queue_device_read(&ring, &touchpad);
 
   StateMachine machine = {
       .keys = keys,
@@ -534,7 +541,7 @@ deferred_close_virtual_device:
 deferred_touchpad_close:
   // touchpad support can be disabled
   // hence need to check if device was ever opened
-  if (touchpad.fd > 0)
+  if (touchpad.fd)
     close(touchpad.fd);
 
 deferred_ungrab_keyboard:
