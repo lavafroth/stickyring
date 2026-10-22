@@ -338,6 +338,11 @@ int main(int argc, const char **argv) {
 
   if (argc > 1)
     read_config(argv[1]);
+  else {
+    config.modifiers = 0b11111111;
+    config.timeout = 300;
+    config.touchpad = false;
+  }
 
   Modifier keys[N_MODFIERS];
   memset(keys, 0, sizeof(keys));
@@ -372,7 +377,7 @@ int main(int argc, const char **argv) {
     goto deferred_close_keyboard;
   }
 
-  DeviceContext touchpad = {.path = NULL, .fd = NULL};
+  DeviceContext touchpad = {.path = NULL, .fd = 0};
 
   if (config.touchpad) {
     char touchpad_path[PATH_MAX];
