@@ -91,8 +91,12 @@ int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 // or a tap, tap-drag, tap-drag-drag finishes and touchpad support is
 // enabled.
 void state_machine__free_latched(StateMachine *machine) {
-  for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
-    if (key->flag == LATCHED) {
+  for (int i = 0; i < N_MODFIERS; i++) {
+
+    bool unmasked = machine->mask & (1 << i);
+    Modifier *key = machine->keys + i;
+
+    if (unmasked && key->flag == LATCHED) {
       key->flag = FREE;
     }
   }
@@ -167,10 +171,9 @@ void state_machine__interact(StateMachine *machine, InputEvent *event) {
 
   if (i >= 0) {
     bool masked = !(machine->mask & (1 << i));
-    // printf("%d masked: %d\n", i, masked);
     if (masked) {
-      // int _unhandled = write(machine->device_fd, event, sizeof(InputEvent));
       emit_event(machine->virtual_fd, EV_KEY, event->code, event->value);
+      (machine->keys + i)->flag = event->value;
       emit_event(machine->virtual_fd, EV_SYN, SYN_REPORT, 0);
       return;
     }
