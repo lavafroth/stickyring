@@ -12,7 +12,6 @@
 #include <sys/time.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 
 #define STATE_MACHINE_IMPLEMENTATION
@@ -45,40 +44,14 @@ void queue_device_read(IoUring *ring, DeviceContext *context) {
   io_uring_sqe_set_data(sqe, context);
 }
 
-int queue_time_read(IoUring *ring, int fd, uint64_t *expiry_couter,
-                    time_t duration_ms) {
-  struct itimerspec dst;
-  struct timespec now;
-  if (clock_gettime(clk, &now) < 0) {
-    perror("failed to get current time");
-    return EXIT_FAILURE;
-  }
-
-  const static time_t ns_per_ms = 1000000L;
-  const static time_t ns_per_s = 1000000000L;
-
-  time_t whole_seconds = duration_ms / 1000L;
-  time_t extra_ms = duration_ms % 1000L;
-
-  dst.it_value.tv_sec = now.tv_sec + whole_seconds;
-  dst.it_value.tv_nsec = now.tv_nsec + (extra_ms * ns_per_ms);
-
-  if (dst.it_value.tv_nsec >= ns_per_s) {
-    dst.it_value.tv_sec += 1;
-    dst.it_value.tv_nsec -= ns_per_s;
-  }
-
-  dst.it_interval.tv_sec = 0;
-  dst.it_interval.tv_nsec = 0;
-  if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &dst, NULL) < 0) {
-    perror("failed ot set timer request");
-    return EXIT_FAILURE;
-  }
-
+void queue_timeout(IoUring *ring, uint64_t active_timer_id, const struct __kernel_timespec *ts) {
   SQE *sqe = io_uring_get_sqe(ring);
-  if (sqe)
-    io_uring_prep_read(sqe, fd, expiry_couter, sizeof(uint64_t), 0);
-  return EXIT_SUCCESS;
+  if (!sqe) {
+    return;
+  }
+
+  io_uring_prep_timeout(sqe, ts, 0, 0);
+  io_uring_sqe_set_data64(sqe, active_timer_id);
 }
 
 typedef enum {
@@ -444,15 +417,14 @@ int main(int argc, const char **argv) {
 
   sleep(1);
 
-  int tfd = timerfd_create(clk, 0);
-  if (tfd < 0) {
-    perror("failed to create timerfd");
-    goto deferred_destroy_virtual_device;
-  }
+  struct __kernel_timespec timer = {
+    .tv_nsec = ((long) config.touchpad_timeout) * 1000 * 1000,
+    .tv_sec = 0,
+  };
 
   if (io_uring_queue_init(QUEUE_DEPTH, &ring, 0) < 0) {
     perror("io_uring initialization failed");
-    goto deferred_close_timer;
+    goto deferred_destroy_virtual_device;
   }
 
   queue_device_read(&ring, &keyboard);
@@ -467,15 +439,13 @@ int main(int argc, const char **argv) {
       .virtual_fd = ui,
       .mask = config.modifiers,
       .buffer_event = NULL,
-
+      .timeout = config.timeout,
+      .active_timer_id = 0,
       .tainted = false,
   };
 
   puts("ring submitted");
   io_uring_submit(&ring);
-
-  uint64_t expiry_indicator;
-  bool listening_for_timer = false;
 
   while (true) {
     int result = io_uring_wait_cqe(&ring, &cqe);
@@ -490,11 +460,9 @@ int main(int argc, const char **argv) {
       goto deferred_queue_exit;
     }
 
-    if (cqe->res == sizeof(expiry_indicator) && !listening_for_timer) {
-      goto deferred_cqe_seen;
-    }
 
-    if (cqe->res == sizeof(expiry_indicator)) {
+    if (cqe->res == -ETIME) {
+      if (machine.active_timer_id != cqe->user_data) goto deferred_cqe_seen;
       state_machine__free_latched(&machine);
       machine.tainted = true;
       state_machine__flush(&machine);
@@ -512,13 +480,9 @@ int main(int argc, const char **argv) {
     InputEvent *event = &(context->event);
     TimerAction res = handle_event(&machine, event);
 
-    if (res == TIMER_CANCEL)
-      listening_for_timer = false;
-    if (res == TIMER_TRIGGER)
-      listening_for_timer = true;
-
+    if (res == TIMER_CANCEL) machine.active_timer_id = (machine.active_timer_id + 1) % 256;
     if (res == TIMER_TRIGGER) {
-      queue_time_read(&ring, tfd, &expiry_indicator, config.touchpad_timeout);
+      queue_timeout(&ring, machine.active_timer_id, &timer);
       io_uring_submit(&ring);
     }
     if (context) {
@@ -533,8 +497,6 @@ int main(int argc, const char **argv) {
 deferred_queue_exit:
   io_uring_queue_exit(&ring);
 
-deferred_close_timer:
-  close(tfd);
   sleep(1);
 
 deferred_destroy_virtual_device:

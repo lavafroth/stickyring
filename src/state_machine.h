@@ -43,6 +43,8 @@ typedef struct {
   bool tainted;
   InputEvent *buffer_event;
   Touch touch;
+  uint64_t timeout;
+  uint64_t active_timer_id;
   uint8_t mask;
 
 } StateMachine;
@@ -98,7 +100,8 @@ void state_machine__free_latched(StateMachine *machine) {
 
 bool state_machine__any_latched(StateMachine *machine) {
   for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
-    if (key->flag == LATCHED) return true;
+    if (key->flag == LATCHED)
+      return true;
   }
   return false;
 }
@@ -148,10 +151,8 @@ void state_machine__interact_modifier(StateMachine *machine, InputEvent *event,
 
   int flag = LOCKED;
 
-  static const int threshold = 200;
-  if (elapsed_ms > threshold) {
+  if (elapsed_ms > machine->timeout)
     flag = NEXT_STATE[key->flag];
-  }
 
   if (key->flag != flag) {
     machine->tainted = true;
