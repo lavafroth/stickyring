@@ -53,7 +53,7 @@ typedef struct {
 
 #ifdef STATE_MACHINE_IMPLEMENTATION
 
-static const int MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
+static const uint16_t MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
                                 KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
                                 KEY_LEFTALT,   KEY_RIGHTALT};
 const int N_MODFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
@@ -81,7 +81,7 @@ int modifier_index(uint16_t code) {
   return -1;
 }
 
-int emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
+ssize_t emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
   struct input_event event = {{0, 0}, type, code, value};
   return write(fd, &event, sizeof(event));
 }
@@ -119,7 +119,7 @@ void state_machine__flush(StateMachine *machine) {
 
   // consume buffer event, writing it to virtual keyboard
   if (machine->buffer_event) {
-    int res = write(machine->virtual_fd, machine->buffer_event,
+    ssize_t res = write(machine->virtual_fd, machine->buffer_event,
                     sizeof(struct input_event));
     if (res < 0) {
       perror("failed to passthrough event to virtual device");
@@ -153,7 +153,7 @@ void state_machine__interact_modifier(StateMachine *machine, InputEvent *event,
   uint64_t current_release_ms = event_time_ms(event);
   uint64_t elapsed_ms = current_release_ms - key->last;
 
-  int flag = LOCKED;
+  ModifierState flag = LOCKED;
 
   if (elapsed_ms > machine->timeout)
     flag = NEXT_STATE[key->flag];

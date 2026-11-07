@@ -68,7 +68,7 @@ typedef struct {
   int64_t touchpad_grace_radius;
 } Config;
 
-int yesnt(const char *line, const char *pattern, unsigned int len) {
+int yesnt(const char *line, const char *pattern, size_t len) {
   if (strncmp(line, pattern, len) != 0) {
     return 0;
   }
@@ -137,7 +137,7 @@ int read_config(const char *path) {
     char *modifier_names[] = {
         "leftshift=", "rightshift=", "leftctrl=", "rightctrl=",
         "leftmeta=",  "rightmeta=",  "leftalt=",  "rightalt="};
-    int lens[] = {10, 11, 9, 10, 9, 10, 8, 9};
+    size_t lens[] = {10, 11, 9, 10, 9, 10, 8, 9};
     for (int i = 0; i < 8; i++) {
       int mod = yesnt(line, modifier_names[i], lens[i]);
       if (mod < 0)
