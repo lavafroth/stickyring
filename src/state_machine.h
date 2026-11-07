@@ -50,7 +50,7 @@ typedef struct {
 
 } StateMachine;
 
-extern const int N_MODFIERS;
+extern const int N_MODIFIERS;
 
 void display(Modifier *keys, int i);
 uint64_t event_time_ms(const struct input_event *ev);
@@ -64,4 +64,5 @@ bool state_machine__any_latched(StateMachine *machine);
 void state_machine__flush(StateMachine *machine);
 void state_machine__interact_modifier(StateMachine *machine, InputEvent *event, int i);
 void state_machine__interact(StateMachine *machine, InputEvent *event);
+
 #endif

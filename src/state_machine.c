@@ -6,7 +6,7 @@
 static const uint16_t MODIFIERS[] = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
                                 KEY_RIGHTCTRL, KEY_LEFTMETA,   KEY_RIGHTMETA,
                                 KEY_LEFTALT,   KEY_RIGHTALT};
-const int N_MODFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
+const int N_MODIFIERS = sizeof(MODIFIERS) / sizeof(MODIFIERS[0]);
 
 const int NEXT_STATE[3] = {LATCHED, FREE, FREE};
 
@@ -25,7 +25,7 @@ void display(Modifier *keys, int i) {
 }
 
 int modifier_index(uint16_t code) {
-  for (int i = 0; i < N_MODFIERS; ++i)
+  for (int i = 0; i < N_MODIFIERS; ++i)
     if (MODIFIERS[i] == code)
       return i;
   return -1;
@@ -49,7 +49,7 @@ ssize_t emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
 // or a tap, tap-drag, tap-drag-drag finishes and touchpad support is
 // enabled.
 void state_machine__free_latched(StateMachine *machine) {
-  for (int i = 0; i < N_MODFIERS; i++) {
+  for (int i = 0; i < N_MODIFIERS; i++) {
 
     bool unmasked = machine->mask & (1 << i);
     Modifier *key = machine->keys + i;
@@ -61,7 +61,7 @@ void state_machine__free_latched(StateMachine *machine) {
 }
 
 bool state_machine__any_latched(StateMachine *machine) {
-  for (Modifier *key = machine->keys; key < machine->keys + N_MODFIERS; ++key) {
+  for (Modifier *key = machine->keys; key < machine->keys + N_MODIFIERS; ++key) {
     if (key->flag == LATCHED)
       return true;
   }
@@ -86,7 +86,7 @@ void state_machine__flush(StateMachine *machine) {
   }
 
   bool capsl = false;
-  for (int j = 0; j < N_MODFIERS; ++j) {
+  for (int j = 0; j < N_MODIFIERS; ++j) {
     bool latched_or_locked = machine->keys[j].flag != FREE;
     capsl |= latched_or_locked;
     emit_event(machine->virtual_fd, EV_KEY, MODIFIERS[j], latched_or_locked);

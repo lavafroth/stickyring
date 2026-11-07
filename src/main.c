@@ -310,7 +310,7 @@ int main(int argc, const char **argv) {
     config.touchpad = false;
   }
 
-  Modifier keys[N_MODFIERS];
+  Modifier keys[N_MODIFIERS];
   memset(keys, 0, sizeof(keys));
 
   char keyboard_path[PATH_MAX];
