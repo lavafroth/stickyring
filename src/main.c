@@ -1,4 +1,3 @@
-#include <bits/time.h>
 #include <fcntl.h>
 #include <liburing.h>
 #include <linux/input.h>
@@ -8,9 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
 #include <sys/time.h>
-#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -44,7 +41,8 @@ void queue_device_read(IoUring *ring, DeviceContext *context) {
   io_uring_sqe_set_data(sqe, context);
 }
 
-void queue_timeout(IoUring *ring, uint64_t active_timer_id, const struct __kernel_timespec *ts) {
+void queue_timeout(IoUring *ring, uint64_t active_timer_id,
+                   const struct __kernel_timespec *ts) {
   SQE *sqe = io_uring_get_sqe(ring);
   if (!sqe) {
     return;
@@ -333,8 +331,8 @@ int main(int argc, const char **argv) {
     return EXIT_FAILURE;
   }
 
-  if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) <
-      0) { // force monotonic timestamps
+  // force monotonic timestamps
+  if (ioctl(keyboard.fd, EVIOCSCLOCKID, &clk) < 0) {
     perror("failed to set monotonic clock");
     goto deferred_close_keyboard;
   }
@@ -412,8 +410,8 @@ int main(int argc, const char **argv) {
   sleep(1);
 
   struct __kernel_timespec timer = {
-    .tv_nsec = ((long) config.touchpad_timeout) * 1000 * 1000,
-    .tv_sec = 0,
+      .tv_nsec = (long)config.touchpad_timeout * 1000 * 1000,
+      .tv_sec = 0,
   };
 
   if (io_uring_queue_init(QUEUE_DEPTH, &ring, 0) < 0) {
@@ -454,9 +452,9 @@ int main(int argc, const char **argv) {
       goto deferred_queue_exit;
     }
 
-
     if (cqe->res == -ETIME) {
-      if (machine.active_timer_id != cqe->user_data) goto deferred_cqe_seen;
+      if (machine.active_timer_id != cqe->user_data)
+        goto deferred_cqe_seen;
       state_machine__free_latched(&machine);
       machine.tainted = true;
       state_machine__flush(&machine);
@@ -474,7 +472,8 @@ int main(int argc, const char **argv) {
     InputEvent *event = &(context->event);
     TimerAction res = handle_event(&machine, event);
 
-    if (res == TIMER_CANCEL) machine.active_timer_id = (machine.active_timer_id + 1) % 256;
+    if (res == TIMER_CANCEL)
+      machine.active_timer_id = (machine.active_timer_id + 1) % 256;
     if (res == TIMER_TRIGGER) {
       queue_timeout(&ring, machine.active_timer_id, &timer);
       io_uring_submit(&ring);
