@@ -81,9 +81,17 @@ int modifier_index(uint16_t code) {
   return -1;
 }
 
+ssize_t write_ignoring_interrupt(int fd, InputEvent *event) {
+  ssize_t result = -EINTR;
+  while (result == -EINTR) {
+    result = write(fd, event, sizeof(InputEvent));
+  }
+  return result;
+}
+
 ssize_t emit_event(int fd, uint16_t type, uint16_t code, int32_t value) {
   struct input_event event = {{0, 0}, type, code, value};
-  return write(fd, &event, sizeof(event));
+  return write_ignoring_interrupt(fd, &event);
 }
 
 // Free all latched keys on the virtual device.
@@ -119,8 +127,8 @@ void state_machine__flush(StateMachine *machine) {
 
   // consume buffer event, writing it to virtual keyboard
   if (machine->buffer_event) {
-    ssize_t res = write(machine->virtual_fd, machine->buffer_event,
-                    sizeof(struct input_event));
+
+    ssize_t res = write_ignoring_interrupt(machine->virtual_fd, machine->buffer_event);
     if (res < 0) {
       perror("failed to passthrough event to virtual device");
     };
