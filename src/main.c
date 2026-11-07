@@ -155,10 +155,6 @@ int read_config(const char *path) {
   config.touchpad_timeout = touchpad_timeout;
   config.touchpad_grace_radius = touchpad_grace_radius;
 
-  printf("%lu\n", config.timeout);
-  printf("%d\n", config.modifiers);
-
-defer_close_file:
   fclose(fp);
   return EXIT_SUCCESS;
 }
@@ -381,8 +377,6 @@ int main(int argc, const char **argv) {
     perror("failed to open uinput");
     goto deferred_touchpad_close;
   }
-
-  uint64_t last_release_ms = 0;
 
   // source: https://www.kernel.org/doc/html/v4.12/input/uinput.html
   USetup usetup;

@@ -1,6 +1,6 @@
 build:
     mkdir -p build
-    gcc src/main.c -o build/stickyring -luring -s -O2
+    gcc src/main.c -o build/stickyring -luring -s -O2 -Wall
 
 test:
     mkdir -p build
