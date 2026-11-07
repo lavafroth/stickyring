@@ -1,11 +1,6 @@
 # `stickyring`
 
-An almost complete port of my sticky keys tool powered by `io_uring`.
-
-### What's Missing
-
-- [x] Configuration options: See `config.ini` for a comprehensive list of all options.
-- [x] Refactoring touchpad business logic: Not user facing.
+Android like sticky keys experience powered by `io_uring`.
 
 ### Extra Features Roadmap
 
@@ -38,6 +33,12 @@ sudo ./build/stickyring config.ini
 ### Systemd Service
 
 Available as part of the repository's nix flake.
+
+### Configuration
+
+See `config.ini` for a comprehensive list of all options.
+
+Note: mentioning the `[touchpad]` section in the configuration automatically enables touchpad support.
 
 ### Bonus
 
