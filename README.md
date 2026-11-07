@@ -2,6 +2,8 @@
 
 Android like sticky keys experience powered by `io_uring`.
 
+Fast, small, around 20kB release binary, stack allocations only.
+
 ### Extra Features Roadmap
 
 - [ ] Configurable touchpad safe zones: Top left and top right triangles.
@@ -27,9 +29,9 @@ See `config.ini` for a comprehensive list of all options.
 
 Note: mentioning the `[touchpad]` section in the configuration automatically enables touchpad support.
 
-### Bonus
+### Systemd 
 
-Compiled binary is around 20kB.
+See example systemd service file in the `systemd/` directory.
 
 ### Testing
 

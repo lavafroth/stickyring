@@ -1,0 +1,9 @@
+[Unit]
+Description="Sticky-keys service"
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/stickyring config.ini
+
+[Install]
+WantedBy=multi-user.target
