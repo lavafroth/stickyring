@@ -14,8 +14,10 @@ void test_free_all_latched() {
   Modifier keys[N_MODFIERS];
   StateMachine machine = {.keys = keys,
                           .capsl = false,
-                          0,
-                          0, // dummy file descriptors, events never dispatched
+                          .device_fd = 0,
+                          .virtual_fd = 0, // dummy file descriptors, events never dispatched
+                          .active_timer_id = 0,
+                          .mask = 0b11111111,
                           .tainted = false,
                           .buffer_event = NULL};
   memset(keys, 0, sizeof(keys));
