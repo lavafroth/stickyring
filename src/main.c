@@ -11,7 +11,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define STATE_MACHINE_IMPLEMENTATION
 #include "state_machine.h"
 
 #define QUEUE_DEPTH 16

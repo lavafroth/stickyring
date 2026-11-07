@@ -11,15 +11,6 @@ Android like sticky keys experience powered by `io_uring`.
 
 ### Build from Source
 
-#### With Nix
-
-```sh
-nix build
-sudo ./result/bin/stickyring config.ini
-```
-
-#### Without Nix
-
 Prerequisites:
 - `gcc`
 - `just`
@@ -30,10 +21,6 @@ just build
 sudo ./build/stickyring config.ini
 ```
 
-### Systemd Service
-
-Available as part of the repository's nix flake.
-
 ### Configuration
 
 See `config.ini` for a comprehensive list of all options.
@@ -43,12 +30,6 @@ Note: mentioning the `[touchpad]` section in the configuration automatically ena
 ### Bonus
 
 Compiled binary is around 20kB.
-
-## Contributing
-
-Please create isolated [STB](https://github.com/nothings/stb/raw/refs/heads/master/docs/stb_howto.txt) header-only libraries based on cut points of your contributions.
-You may include `stdint.h`, `linux/input.h` or any other header with its own guard statement.
-See `src/state_machine.h` as an example.
 
 ### Testing
 
