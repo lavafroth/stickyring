@@ -10,7 +10,7 @@
 #include "../src/state_machine.h"
 
 void test_free_all_latched() {
-  Modifier keys[N_MODFIERS];
+  Modifier keys[N_MODIFIERS];
   StateMachine machine = {.keys = keys,
                           .capsl = false,
                           .device_fd = 0,
@@ -33,7 +33,7 @@ void test_free_all_latched() {
 
 
 void test_free_all_latched_masked() {
-  Modifier keys[N_MODFIERS];
+  Modifier keys[N_MODIFIERS];
   StateMachine machine = {.keys = keys,
                           .capsl = false,
                           .device_fd = 0,
