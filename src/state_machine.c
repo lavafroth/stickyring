@@ -56,6 +56,7 @@ void state_machine__free_latched(StateMachine *machine) {
 
     if (unmasked && key->flag == LATCHED) {
       key->flag = FREE;
+      key->last = 0;
     }
   }
 }
